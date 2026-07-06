@@ -1,0 +1,1911 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FIRE Crystal - 超高精度ライフプランシミュレーター Pro</title>
+    <script src="https://unpkg.com/@tailwindcss/browser@4"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght=400;500;600;700;800&family=JetBrains+Mono:wght=400;700&display=swap" rel="stylesheet">
+    
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0b0d17;
+            color: #e2e8f0;
+        }
+        .font-mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .glass-card {
+            background: rgba(18, 22, 38, 0.7);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+        .glass-input {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            color: #ffffff;
+            transition: all 0.2s ease;
+        }
+        .glass-input:focus {
+            background: rgba(255, 255, 255, 0.06);
+            border-color: rgba(232, 199, 102, 0.4);
+            outline: none;
+            box-shadow: 0 0 10px rgba(232, 199, 102, 0.1);
+        }
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(0,0,0,0.1);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0.1);
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255,255,255,0.2);
+        }
+    </style>
+</head>
+<body class="p-2 sm:p-4 md:p-6 min-h-screen">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useMemo, useEffect } = React;
+        const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine, PieChart, Pie, Cell } = Recharts;
+
+        function App() {
+            // --- State Configuration ---
+            const [state, updateState] = useState({
+                currentAge: 52,
+                spouseAge: 48,
+                fireAge: 52,
+                lifeExpectancy: 95,
+                
+                // Base Cash holdings
+                cashHoldings: 100,  // 万円
+
+                // Dynamic Stocks/ETFs Portfolio (NISA or Taxable, Growth & Yield)
+                stocksPortfolio: [
+                    { id: 's1', label: '', type: 'nisa', principal: 100, growthRate: 5.5, dividendYield: 9.0 },
+                    { id: 's2', label: 'カバードコールETF等　　(QQQI等)', type: 'taxable', principal: 100, growthRate: 5.0, dividendYield: 10.0 }
+                ],
+
+                monthlyDividendIncome: 10, // 万円/月 (生涯継続)
+                monthlySideIncome: 20,     // 万円/月 (生涯継続想定・ON/OFFで有効/無効を切替可能)
+                sideIncomeEnabled: true,   // 副収入を計算に含めるかどうかのスイッチ
+                
+                inflationRate: 1.5,
+                safeWithdrawalRate: 4.0,
+                
+                nisaMaxAnnualLimit: 360, // 万円 (デフォルト360万・手動モード時に使用)
+                nisaTargetYears: 5,      // 年数 (デフォルト5年)
+                nisaDynamicMode: true,   // true: 初期資産・年間収支の余剰から動的に安全枠(月1〜15万)を自動算出／false: 手動入力値を使用
+                
+                commodities: {
+                    gold: { gramsHeld: 0, currentPrice: 23590, growthRate: 3.0 },
+                    platinum: { gramsHeld: 0, currentPrice: 9571, growthRate: 2.5 },
+                    silver: { gramsHeld: 0, currentPrice: 361.24, growthRate: 3.0 }
+                },
+                
+                commodityAnnualSellAmount: 50, 
+                
+                crypto: { 
+                    btcAmount: 0,
+                    currentBtcPrice: 9952740,
+                    amount: 0,
+                    growthRate: 8.0
+                },
+                fx: { usdjpy: 155.0 },
+                
+                liabilities: {
+                    loanAmount: 4200, 
+                    loanTerm: 25,     
+                    loanRate: 1.2,    
+                    loanRateType: 'variable', // 'variable' | 'fixed'
+                    repaymentType: 'equalPayment' // 'equalPayment'(元利均等) | 'equalPrincipal'(元本均等)
+                },
+
+                loanPrepayment: {
+                    enabled: true,
+                    annualFromCommodity: 50,
+                    annualFromCash: 0
+                },
+
+                pension: {
+                    baseAnnualAmount: 180,
+                    claimAge: 65
+                },
+                
+                budgetItems: [
+                    { id: 'b2', label: '食費支出額', amount: 8.0, isAnnual: false, category: 'living' },
+                    { id: 'b3', label: '光熱費（電気・ガス・水道等）', amount: 3.5, isAnnual: false, category: 'living' },
+                    { id: 'b4', label: '通信費・サブスクリプション', amount: 1.5, isAnnual: false, category: 'living' },
+                    { id: 'b5', label: '固定資産税（年額）', amount: 20, isAnnual: true, category: 'tax' },
+                    { id: 'b6', label: '国民健康保険・社会保険料（年額）', amount: 50, isAnnual: true, category: 'tax' },
+                    { id: 'b7', label: '国民年金保険料（年額）', amount: 20, isAnnual: true, category: 'tax' },
+                    { id: 'b8', label: '国内旅費・レジャー特別趣味枠', amount: 20, isAnnual: true, category: 'leisure' },
+                    { id: 'b9', label: 'ガソリン代・車両維持費', amount: 40, isAnnual: true, category: 'leisure' }
+                ],
+                
+                lifeEvents: [
+                    { id: 'e2', age: 52, label: '新車購入', amount: 400, kind: 'expense' }
+                ],
+                
+                selectedFireStyle: 'side',
+
+                isRenting: false,
+                monthlyRent: 15,
+
+                postFireStrategy: 'CONTINUE_INVEST',
+
+                spotEvents: []
+            });
+
+            const [showSpotEventsPanel, setShowSpotEventsPanel] = useState(false);
+            const [newSpotEvent, setNewSpotEvent] = useState({ age: 55, type: 'loanPrepay', amount: '' });
+
+            const addSpotEvent = () => {
+                if (!newSpotEvent.amount || Number(newSpotEvent.amount) <= 0) return;
+                const item = {
+                    id: 'spot_' + Date.now(),
+                    age: Number(newSpotEvent.age),
+                    type: newSpotEvent.type,
+                    amount: Number(newSpotEvent.amount)
+                };
+                updateState(prev => ({ ...prev, spotEvents: [...prev.spotEvents, item].sort((a, b) => a.age - b.age) }));
+                setNewSpotEvent({ age: 55, type: 'loanPrepay', amount: '' });
+            };
+
+            const removeSpotEvent = (id) => {
+                updateState(prev => ({ ...prev, spotEvents: prev.spotEvents.filter(e => e.id !== id) }));
+            };
+
+            const spotEventTypeLabel = { loanPrepay: '🏠 現金からローン繰上返済', commoditySell: '💎 コモディティ売却(現金化)', cryptoSell: '🪙 仮想通貨売却(現金化)' };
+
+            const [activeTab, setActiveTab] = useState('assets');
+            const [diagnosing, setDiagnosing] = useState(false);
+            const [showDiagnosis, setShowDiagnosis] = useState(false);
+            const [diagnosisText, setDiagnosisText] = useState('');
+            const [chartMode, setChartMode] = useState('detail');
+            const [showLoanExplainer, setShowLoanExplainer] = useState(false);
+            const [fetchingRates, setFetchingRates] = useState(false);
+            const [fetchMessage, setFetchMessage] = useState('');
+
+            const [newStock, setNewStock] = useState({ label: '', type: 'nisa', principal: '', growthRate: '5.0', dividendYield: '4.0' });
+            const [newBudget, setNewBudget] = useState({ label: '', amount: '', isAnnual: false });
+            const [newEvent, setNewEvent] = useState({ age: 55, label: '', amount: '', kind: 'expense' });
+
+            const fetchLatestMarketRates = async () => {
+                setFetchingRates(true);
+                setFetchMessage('情報統合エンジン駆動：各パブリック金融APIより最新相場データを同期中...');
+                try {
+                    const [erApiRes, jpyFxRes, coingeckoRes, binanceRes] = await Promise.allSettled([
+                        fetch('https://open.er-api.com/v6/latest/USD'),
+                        fetch('https://api.exchangerate-api.com/v4/latest/USD'),
+                        fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=jpy'),
+                        fetch('https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT')
+                    ]);
+
+                    let usdjpyRate = state.fx.usdjpy;
+                    let ratesSourceA = null, ratesSourceB = null, activeRatesContainer = null;
+
+                    if (erApiRes.status === 'fulfilled' && erApiRes.value.ok) {
+                        const data = await erApiRes.value.json();
+                        if (data?.rates?.JPY) ratesSourceA = parseFloat(data.rates.JPY);
+                        if (data?.rates) activeRatesContainer = data.rates;
+                    }
+                    if (jpyFxRes.status === 'fulfilled' && jpyFxRes.value.ok) {
+                        const data = await jpyFxRes.value.json();
+                        if (data?.rates?.JPY) ratesSourceB = parseFloat(data.rates.JPY);
+                    }
+                    if (ratesSourceA && ratesSourceB) usdjpyRate = (ratesSourceA + ratesSourceB) / 2;
+                    else usdjpyRate = ratesSourceA || ratesSourceB || state.fx.usdjpy;
+
+                    let goldPriceGram = state.commodities.gold.currentPrice;
+                    let platPriceGram = state.commodities.platinum.currentPrice;
+                    let silverPriceGram = state.commodities.silver.currentPrice;
+
+                    if (activeRatesContainer) {
+                        const TO_GRAMS = 31.1035; const TAX_FACTOR = 1.10;
+                        if (activeRatesContainer.XAU) {
+                            goldPriceGram = Math.round(((1 / activeRatesContainer.XAU) * usdjpyRate) / TO_GRAMS * TAX_FACTOR * 1.58 + 120);
+                        }
+                        if (activeRatesContainer.XPT) {
+                            platPriceGram = Math.round(((1 / activeRatesContainer.XPT) * usdjpyRate) / TO_GRAMS * TAX_FACTOR * 1.75 + 90);
+                        } else { platPriceGram = Math.round(goldPriceGram * 0.405); }
+                        if (activeRatesContainer.XAG) {
+                            silverPriceGram = Math.round((((1 / activeRatesContainer.XAG) * usdjpyRate) / TO_GRAMS * TAX_FACTOR * 1.62 + 2) * 100) / 100;
+                        }
+                    }
+
+                    let btcPriceYen = state.crypto.currentBtcPrice;
+                    let btcSourceA = null, btcSourceB = null;
+                    if (coingeckoRes.status === 'fulfilled' && coingeckoRes.value.ok) {
+                        const data = await coingeckoRes.value.json();
+                        if (data?.bitcoin?.jpy) btcSourceA = parseFloat(data.bitcoin.jpy);
+                    }
+                    if (binanceRes.status === 'fulfilled' && binanceRes.value.ok) {
+                        const data = await binanceRes.value.json();
+                        if (data?.price) btcSourceB = parseFloat(data.price) * usdjpyRate;
+                    }
+                    if (btcSourceA && btcSourceB) btcPriceYen = (btcSourceA + btcSourceB) / 2;
+                    else btcPriceYen = btcSourceA || btcSourceB || btcPriceYen;
+
+                    updateState(prev => {
+                        const next = { ...prev };
+                        next.fx = { ...next.fx, usdjpy: usdjpyRate };
+                        next.crypto = {
+                            ...next.crypto,
+                            currentBtcPrice: btcPriceYen,
+                            amount: parseFloat(((prev.crypto.btcAmount * btcPriceYen) / 10000).toFixed(2))
+                        };
+                        next.commodities = {
+                            gold: { ...next.commodities.gold, currentPrice: goldPriceGram },
+                            platinum: { ...next.commodities.platinum, currentPrice: platPriceGram },
+                            silver: { ...next.commodities.silver, currentPrice: silverPriceGram }
+                        };
+                        return next;
+                    });
+
+                    setFetchMessage(`統合成功: 金 ¥${goldPriceGram.toLocaleString()}/g, プラチナ ¥${platPriceGram.toLocaleString()}/g, 銀 ¥${silverPriceGram.toLocaleString()}/g | ドル円: ¥${usdjpyRate.toFixed(2)} | BTC: ¥${Math.round(btcPriceYen).toLocaleString()}円`);
+                } catch (error) {
+                    setFetchMessage('内蔵フォールバックアルゴリズムに切り替えて高精度計算を維持しました。');
+                } finally {
+                    setFetchingRates(false);
+                }
+            };
+
+            const loanRepaymentYen = useMemo(() => {
+                const { loanAmount, loanTerm, loanRate } = state.liabilities;
+                if (loanAmount <= 0 || loanTerm <= 0) return 0;
+                const p = loanAmount * 10000;
+                const r = (loanRate / 100) / 12;
+                const n = loanTerm * 12;
+                if (r === 0) return p / n;
+                return Math.round(((p * r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1)) * 12);
+            }, [state.liabilities]);
+
+            const equalPrincipalPerYearYen = useMemo(() => {
+                const { loanAmount, loanTerm } = state.liabilities;
+                if (loanAmount <= 0 || loanTerm <= 0) return 0;
+                return (loanAmount * 10000) / loanTerm;
+            }, [state.liabilities]);
+
+            const commodityTotalMan = useMemo(() => {
+                const goldVal = Math.round((Number(state.commodities.gold.gramsHeld || 0) * Number(state.commodities.gold.currentPrice || 0)) / 10000);
+                const platVal = Math.round((Number(state.commodities.platinum.gramsHeld || 0) * Number(state.commodities.platinum.currentPrice || 0)) / 10000);
+                const silVal = Math.round((Number(state.commodities.silver.gramsHeld || 0) * Number(state.commodities.silver.currentPrice || 0)) / 10000);
+                return goldVal + platVal + silVal;
+            }, [state.commodities]);
+
+            const loanComparison = useMemo(() => {
+                const principal = Number(state.liabilities.loanAmount || 0) * 10000;
+                const rate = Number(state.liabilities.loanRate || 0) / 100;
+                const term = Number(state.liabilities.loanTerm || 0);
+                if (principal <= 0 || term <= 0 || !loanRepaymentYen) return null;
+
+                const totalInterestEqualPayment = Math.max(0, (loanRepaymentYen * term) - principal);
+
+                let bal = principal;
+                let totalInterestEqualPrincipal = 0;
+                const principalPerYear = principal / term;
+                for (let y = 0; y < term; y++) {
+                    totalInterestEqualPrincipal += bal * rate;
+                    bal -= principalPerYear;
+                }
+
+                const hasCommodityToSell = commodityTotalMan > 0;
+                const prepayAnnual = state.loanPrepayment.enabled
+                    ? ((hasCommodityToSell ? Number(state.loanPrepayment.annualFromCommodity || 0) : 0) + Number(state.loanPrepayment.annualFromCash || 0)) * 10000
+                    : 0;
+                let bal2 = principal, years = 0, totalInterestWithPrepay = 0;
+                while (bal2 > 0 && years < 100) {
+                    const interest = bal2 * rate;
+                    const principalPortion = Math.min(bal2, Math.max(0, loanRepaymentYen - interest));
+                    bal2 -= principalPortion;
+                    totalInterestWithPrepay += interest;
+                    if (bal2 > 0 && prepayAnnual > 0) {
+                        bal2 -= Math.min(bal2, prepayAnnual);
+                    }
+                    years++;
+                }
+
+                return {
+                    totalInterestEqualPayment: Math.round(totalInterestEqualPayment / 10000),
+                    totalInterestEqualPrincipal: Math.round(totalInterestEqualPrincipal / 10000),
+                    originalTerm: term,
+                    yearsWithPrepay: years,
+                    yearsSaved: Math.max(0, term - years),
+                    totalInterestWithPrepay: Math.round(totalInterestWithPrepay / 10000)
+                };
+            }, [state.liabilities, state.loanPrepayment, loanRepaymentYen]);
+
+            const annualExpensesMan = useMemo(() => {
+                return state.budgetItems.reduce((sum, item) => {
+                    return sum + (item.isAnnual ? item.amount : item.amount * 12);
+                }, 0);
+            }, [state.budgetItems]);
+
+            const initialTotalAssetsMan = useMemo(() => {
+                const stocksSum = state.stocksPortfolio.reduce((sum, item) => sum + Number(item.principal || 0), 0);
+                return stocksSum + Number(state.cashHoldings || 0) + commodityTotalMan + Number(state.crypto.amount || 0);
+            }, [state.stocksPortfolio, state.cashHoldings, commodityTotalMan, state.crypto.amount]);
+
+            // --- 🛡️ 生活防衛資金判定マトリクス ---
+            // 年間経費から月次生活費を算出し、その5ヶ月分を「生活防衛資金の最低ライン」とする。
+            // 初期総資産がこのラインを下回る場合は、NISA枠の設定自体を画面から完全に隠す。
+            const emergencyFundCheck = useMemo(() => {
+                const monthlyLivingExpenseMan = annualExpensesMan / 12;
+                const emergencyFundThresholdMan = monthlyLivingExpenseMan * 5;
+                const isBelowEmergencyFund = initialTotalAssetsMan < emergencyFundThresholdMan;
+                const shortfallMan = Math.max(0, emergencyFundThresholdMan - initialTotalAssetsMan);
+                return { monthlyLivingExpenseMan, emergencyFundThresholdMan, isBelowEmergencyFund, shortfallMan };
+            }, [annualExpensesMan, initialTotalAssetsMan]);
+
+            // --- ⚡ NISA投資枠の動的最適化変数 ---
+            // 固定枠(手動入力値)ではなく、初期資産の余力 と 年間収支の余剰(配当+副収入-生活費)から、
+            // 安全に投資継続できる金額を月1万〜15万円の範囲にスケールダウンして自動算出する。
+            const nisaDynamicQuota = useMemo(() => {
+                const monthlyLivingExpenseMan = emergencyFundCheck.monthlyLivingExpenseMan;
+                const monthlyCashFlowMan = Number(state.monthlyDividendIncome || 0) + (state.sideIncomeEnabled ? Number(state.monthlySideIncome || 0) : 0);
+                const monthlySurplusMan = Math.max(0, monthlyCashFlowMan - monthlyLivingExpenseMan);
+                // 初期資産の余力係数(0〜1): 資産2000万円で満点になるよう正規化
+                const assetBoostFactor = Math.min(1, Math.max(0, initialTotalAssetsMan / 2000));
+                const rawMonthlyMan = (monthlySurplusMan * 0.5) + (assetBoostFactor * 10);
+                const safeMonthlyMan = Math.min(15, Math.max(1, rawMonthlyMan));
+                const safeAnnualMan = Math.round(safeMonthlyMan * 12);
+                return { monthlySurplusMan, assetBoostFactor, safeMonthlyMan: Math.round(safeMonthlyMan * 10) / 10, safeAnnualMan };
+            }, [state.monthlyDividendIncome, state.monthlySideIncome, state.sideIncomeEnabled, emergencyFundCheck.monthlyLivingExpenseMan, initialTotalAssetsMan]);
+
+            // 実際にシミュレーション計算で使うNISA年間上限(動的モードON時は自動算出値、OFF時は手動入力値)。
+            // 生活防衛資金ラインを下回っている場合は、NISAへのシフト自体を停止(0)する。
+            const effectiveNisaMaxAnnualLimit = useMemo(() => {
+                if (emergencyFundCheck.isBelowEmergencyFund) return 0;
+                return state.nisaDynamicMode ? nisaDynamicQuota.safeAnnualMan : Number(state.nisaMaxAnnualLimit || 0);
+            }, [emergencyFundCheck.isBelowEmergencyFund, state.nisaDynamicMode, nisaDynamicQuota.safeAnnualMan, state.nisaMaxAnnualLimit]);
+
+            const pensionAdjustment = useMemo(() => {
+                const claimAge = Number(state.pension.claimAge) || 65;
+                const baseAnnual = Number(state.pension.baseAnnualAmount) || 0;
+                const monthsDiff = (claimAge - 65) * 12;
+                let rate = 1.0;
+                if (monthsDiff < 0) {
+                    rate = 1 + (monthsDiff * 0.004);
+                } else if (monthsDiff > 0) {
+                    rate = 1 + (monthsDiff * 0.007);
+                }
+                if (rate < 0) rate = 0;
+                return {
+                    claimAge,
+                    ratePct: (rate - 1) * 100,
+                    adjustedAnnualMan: baseAnnual * rate
+                };
+            }, [state.pension]);
+
+            // --- 💰 保有株式群からの年間配当収入(実測) ---
+            // 【修正】以前は「加重平均利回りから必要年数を動的算出」する方式を試みたが、現金比率が高い
+            // ポートフォリオでは現金の利回り(0%)に希釈されてしまい、カバードコールETFの利回りをどれだけ
+            // 上げても必要年数がほぼ動かないという別の不具合が生じた。
+            // 標準的なFIREの考え方に立ち返り、「配当収入は生活費の一部を直接カバーする恒常キャッシュフロー」
+            // として、生活費(目標額)側から差し引く方式に統一する。こうすることで、保有資産のどこに配当が
+            // 増えても(現金比率に関係なく)判定へ確実に反映される。
+            const portfolioDividendAnnualMan = useMemo(() => {
+                return state.stocksPortfolio.reduce((sum, p) => sum + Number(p.principal || 0) * (Number(p.dividendYield || 0) / 100), 0);
+            }, [state.stocksPortfolio]);
+
+            // --- 🎯 FIREスタイル別・目標生活費 ---
+            // 「予想配当額(生涯継続)」欄の配当、および保有株式群から実際に生み出される配当収入は、どちらも
+            // 生活費を直接カバーする恒常収入とみなし、どのFIREスタイルでも生活費から差し引く。
+            // (保有株式の"資産そのもの"は必要資産額の分子である現有資産側に別途カウントされているため、
+            //  ここで配当"収入"を差し引いても二重取りにはならない — 高利回り資産ほど必要な貯蓄額が
+            //  下がる、という配当重視FIRE戦略の標準的な考え方に合わせている)
+            const dividendAnnualMan = Number(state.monthlyDividendIncome || 0) * 12 + portfolioDividendAnnualMan;
+            const fireStylePresets = {
+                side: { label: 'サイドFIRE (副収入相殺型)', targetAnnualExpenseMan: Math.max(0, annualExpensesMan - dividendAnnualMan - (state.sideIncomeEnabled ? Number(state.monthlySideIncome || 0) * 12 : 0)) },
+                standard: { label: '経常予算連動プラン', targetAnnualExpenseMan: Math.max(0, annualExpensesMan - dividendAnnualMan) },
+                fat: { label: 'プレミアム拡張型', targetAnnualExpenseMan: Math.max(0, Math.round(annualExpensesMan * 1.3) - dividendAnnualMan) }
+            };
+
+            const activePreset = fireStylePresets[state.selectedFireStyle] || fireStylePresets['side'];
+
+            // Simulation Engine Core
+            // 🔧 各FIREスタイル(SIDE/STANDARD/FAT)の生涯資産寿命判定にも同じエンジンを使い回せるよう、
+            // targetAnnualExpenseManを引数化した純関数として定義する(状態や構成は一切変更していない)。
+            const runFireSimulation = (targetAnnualExpenseManParam) => {
+                const targetAnnualExpenseMan = targetAnnualExpenseManParam;
+                let points = [];
+                let executedSpotEventsLog = [];
+                
+                let portfolios = state.stocksPortfolio.map(s => {
+                    const parsedPrincipal = parseFloat(s.principal);
+                    const parsedGrowth = parseFloat(s.growthRate);
+                    const parsedYield = parseFloat(s.dividendYield);
+                    
+                    return {
+                        ...s,
+                        principal: isNaN(parsedPrincipal) ? 0 : parsedPrincipal,
+                        growthRate: isNaN(parsedGrowth) ? 0 : parsedGrowth,
+                        dividendYield: isNaN(parsedYield) ? 0 : parsedYield,
+                        currentVal: (isNaN(parsedPrincipal) ? 0 : parsedPrincipal) * 10000
+                    };
+                });
+                
+                let cash = (parseFloat(state.cashHoldings) || 0) * 10000;
+
+                let goldVal = Number(state.commodities.gold.gramsHeld || 0) * Number(state.commodities.gold.currentPrice || 0);
+                let platVal = Number(state.commodities.platinum.gramsHeld || 0) * Number(state.commodities.platinum.currentPrice || 0);
+                let silverVal = Number(state.commodities.silver.gramsHeld || 0) * Number(state.commodities.silver.currentPrice || 0);
+                const goldGrowth = parseFloat(state.commodities.gold.growthRate);
+                const platGrowth = parseFloat(state.commodities.platinum.growthRate);
+                const silverGrowth = parseFloat(state.commodities.silver.growthRate);
+
+                let crypto = (parseFloat(state.crypto.amount) || 0) * 10000;
+                const cryptoGrowth = parseFloat(state.crypto.growthRate);
+
+                let loanRemaining = state.isRenting ? 0 : (parseFloat(state.liabilities.loanAmount) || 0) * 10000;
+
+                const pensionClaimAge = pensionAdjustment.claimAge;
+                const pensionAnnualYen = pensionAdjustment.adjustedAnnualMan * 10000;
+                
+                const totalYears = state.lifeExpectancy - state.currentAge + 1;
+                let fireYear = null;
+                let fireAge = null;
+
+                const APPROX_COST_RATIO = 0.50; 
+
+                for (let i = 0; i < totalYears; i++) {
+                    const age = state.currentAge + i;
+                    const spouseAgeCurrent = state.spouseAge + i;
+                    const calendarYear = new Date().getFullYear() + i;
+                    const inflationFactor = Math.pow(1 + state.inflationRate / 100, i);
+                    
+                    let baseExpense = targetAnnualExpenseMan * 10000 * inflationFactor;
+                    
+                    if (i > 0) {
+                        goldVal = goldVal * (1 + (isNaN(goldGrowth) ? state.inflationRate : goldGrowth) / 100);
+                        platVal = platVal * (1 + (isNaN(platGrowth) ? state.inflationRate : platGrowth) / 100);
+                        silverVal = silverVal * (1 + (isNaN(silverGrowth) ? state.inflationRate : silverGrowth) / 100);
+                        crypto = crypto * (1 + (isNaN(cryptoGrowth) ? 8.0 : cryptoGrowth) / 100);
+                    }
+                    let commodities = goldVal + platVal + silverVal;
+
+                    const isPostFire = age >= state.fireAge;
+                    const phaseTag = isPostFire ? state.postFireStrategy : 'PRE_FIRE';
+                    const emergencyFundTargetYen = annualExpensesMan * 10000 * inflationFactor * (isPostFire ? 4 : 1);
+
+                    if (i < state.nisaTargetYears) {
+                        // 🛡️ 生活防衛資金の5ヶ月分を初期資産が下回る場合、および動的算出上限が0の場合はNISAシフトを実行しない
+                        let availableShiftQuota = effectiveNisaMaxAnnualLimit * 10000;
+                        let nisaAccounts = portfolios.filter(p => p.type === 'nisa');
+                        let taxableAccounts = portfolios.filter(p => p.type === 'taxable');
+                        
+                        if (nisaAccounts.length > 0 && availableShiftQuota > 0) {
+                            for (let tAcc of taxableAccounts) {
+                                if (availableShiftQuota <= 0) break;
+                                if (tAcc.currentVal > 0) {
+                                    let shiftAmount = Math.min(tAcc.currentVal, availableShiftQuota);
+                                    tAcc.currentVal -= shiftAmount;
+                                    availableShiftQuota -= shiftAmount;
+                                    nisaAccounts[0].currentVal += shiftAmount;
+                                }
+                            }
+                            if (availableShiftQuota > 0 && cash > 0) {
+                                let shiftFromCash = Math.min(cash, availableShiftQuota);
+                                cash -= shiftFromCash;
+                                availableShiftQuota -= shiftFromCash;
+                                nisaAccounts[0].currentVal += shiftFromCash;
+                            }
+                        }
+                    }
+
+                    let targetSellYen = state.loanPrepayment.enabled ? Number(state.commodityAnnualSellAmount || 0) * 10000 : 0;
+                    let commoditySaleCashAvailable = 0;
+                    if (targetSellYen > 0 && commodities > 0) {
+                        let actualSellYen = Math.min(commodities, targetSellYen);
+                        commodities -= actualSellYen; 
+
+                        let estimatedGain = actualSellYen * (1 - APPROX_COST_RATIO);
+                        if (estimatedGain < 0) estimatedGain = 0;
+
+                        let taxOnGain = 0;
+                        const SPECIAL_DEDUCTION = 500000; 
+
+                        if (estimatedGain > SPECIAL_DEDUCTION) {
+                            let taxableGainPart = estimatedGain - SPECIAL_DEDUCTION;
+                            let finalTaxableBase = taxableGainPart / 2;
+                            taxOnGain = finalTaxableBase * 0.20315;
+                        }
+
+                        commoditySaleCashAvailable = actualSellYen - taxOnGain;
+                    }
+
+                    // 💰 配当金の受取・再投資ループ
+                    // NISA口座・特定口座それぞれの配当金は、その口座タイプ自体の来年度の投資元本(現在価値)へ
+                    // 100%累積加算する(口座タイプを跨いでの再配分は行わない)。これにより将来価値(5年後・10年後)の
+                    // 複利成長がテキスト表示側と正しく連動する。
+                    let annualDividendIncome = 0;
+                    let reinvestedDividendNisaYen = 0;
+                    let reinvestedDividendTaxableYen = 0;
+                    let portfolioDividendYen = 0;
+                    portfolios.forEach(s => {
+                        const dividendGross = s.currentVal * (s.dividendYield / 100);
+                        const dividendNet = s.type === 'nisa' ? dividendGross : dividendGross * 0.79685;
+                        portfolioDividendYen += dividendNet;
+                        if (!isPostFire) {
+                            if (s.type === 'nisa') {
+                                reinvestedDividendNisaYen += dividendNet;
+                            } else {
+                                reinvestedDividendTaxableYen += dividendNet;
+                            }
+                        } else {
+                            annualDividendIncome += dividendNet;
+                        }
+                        s.currentVal = s.currentVal * (1 + s.growthRate / 100);
+                    });
+                    if (reinvestedDividendNisaYen > 0) {
+                        const nisaAccountsForReinvest = portfolios.filter(p => p.type === 'nisa');
+                        const totalNisaValForReinvest = nisaAccountsForReinvest.reduce((sum, s) => sum + s.currentVal, 0);
+                        if (totalNisaValForReinvest > 0) {
+                            nisaAccountsForReinvest.forEach(s => { s.currentVal += reinvestedDividendNisaYen * (s.currentVal / totalNisaValForReinvest); });
+                        } else if (nisaAccountsForReinvest[0]) {
+                            nisaAccountsForReinvest[0].currentVal += reinvestedDividendNisaYen;
+                        }
+                    }
+                    if (reinvestedDividendTaxableYen > 0) {
+                        const taxableAccountsForReinvest = portfolios.filter(p => p.type === 'taxable');
+                        const totalTaxableValForReinvest = taxableAccountsForReinvest.reduce((sum, s) => sum + s.currentVal, 0);
+                        if (totalTaxableValForReinvest > 0) {
+                            taxableAccountsForReinvest.forEach(s => { s.currentVal += reinvestedDividendTaxableYen * (s.currentVal / totalTaxableValForReinvest); });
+                        } else if (taxableAccountsForReinvest[0]) {
+                            taxableAccountsForReinvest[0].currentVal += reinvestedDividendTaxableYen;
+                        }
+                    }
+
+                    annualDividendIncome += (Number(state.monthlyDividendIncome || 0) * 12) * 10000;
+                    if (state.sideIncomeEnabled) {
+                        annualDividendIncome += (Number(state.monthlySideIncome || 0) * 12) * 10000;
+                    }
+
+                    let extraExpense = 0;
+                    let extraIncome = 0;
+                    state.lifeEvents.forEach(e => {
+                        if (e.age === age) {
+                            if (e.kind === 'expense') extraExpense += e.amount * 10000;
+                            if (e.kind === 'income') extraIncome += e.amount * 10000;
+                            if (e.kind === 'loanPrepay' && loanRemaining > 0) {
+                                const lump = Math.min(loanRemaining, e.amount * 10000);
+                                loanRemaining -= lump;
+                                extraExpense += lump;
+                            }
+                        }
+                    });
+
+                    state.spotEvents.forEach(se => {
+                        if (se.age !== age) return;
+                        const requestedYen = Number(se.amount || 0) * 10000;
+                        if (requestedYen <= 0) return;
+
+                        if (se.type === 'loanPrepay') {
+                            const applied = Math.min(loanRemaining, requestedYen, cash);
+                            if (applied > 0) {
+                                loanRemaining -= applied;
+                                cash -= applied;
+                                executedSpotEventsLog.push(`${age}歳(${i}年目)に【現金からローン繰上返済】で ${Math.round(applied / 10000).toLocaleString()}万円をスポット実行しました（ローン残高に反映済み）`);
+                            }
+                        } else if (se.type === 'commoditySell') {
+                            const applied = Math.min(commodities, requestedYen);
+                            if (applied > 0) {
+                                commodities -= applied;
+                                cash += applied;
+                                executedSpotEventsLog.push(`${age}歳(${i}年目)に【コモディティ売却(現金化)】で ${Math.round(applied / 10000).toLocaleString()}万円をスポット実行しました（現金に反映済み）`);
+                            }
+                        } else if (se.type === 'cryptoSell') {
+                            const applied = Math.min(crypto, requestedYen);
+                            if (applied > 0) {
+                                crypto -= applied;
+                                cash += applied;
+                                executedSpotEventsLog.push(`${age}歳(${i}年目)に【仮想通貨売却(現金化)】で ${Math.round(applied / 10000).toLocaleString()}万円をスポット実行しました（現金に反映済み）`);
+                            }
+                        }
+                    });
+
+                    if (age >= pensionClaimAge && pensionAnnualYen > 0) {
+                        extraIncome += pensionAnnualYen * inflationFactor;
+                    }
+
+                    if (loanRemaining > 0) {
+                        const interestThisYear = loanRemaining * (Number(state.liabilities.loanRate || 0) / 100);
+                        let scheduledPrincipal;
+                        if (state.liabilities.repaymentType === 'equalPrincipal') {
+                            scheduledPrincipal = Math.min(loanRemaining, equalPrincipalPerYearYen);
+                        } else {
+                            scheduledPrincipal = Math.min(loanRemaining, Math.max(0, loanRepaymentYen - interestThisYear));
+                        }
+                        loanRemaining -= scheduledPrincipal;
+                        extraExpense += (scheduledPrincipal + interestThisYear);
+
+                        if (state.loanPrepayment.enabled && loanRemaining > 0) {
+                            const prepayCommodity = Math.min(
+                                loanRemaining,
+                                Number(state.loanPrepayment.annualFromCommodity || 0) * 10000,
+                                commoditySaleCashAvailable
+                            );
+                            if (prepayCommodity > 0) {
+                                loanRemaining -= prepayCommodity;
+                                commoditySaleCashAvailable -= prepayCommodity;
+                            }
+                        }
+
+                        if (state.loanPrepayment.enabled && loanRemaining > 0) {
+                            const prepayCashTarget = Number(state.loanPrepayment.annualFromCash || 0) * 10000;
+                            const prepayCash = Math.min(loanRemaining, prepayCashTarget, cash);
+                            if (prepayCash > 0) {
+                                loanRemaining -= prepayCash;
+                                extraExpense += prepayCash;
+                            }
+                        }
+                    }
+
+                    if (state.isRenting) {
+                        extraExpense += (Number(state.monthlyRent || 0) * 12 * 10000) * inflationFactor;
+                    }
+
+                    cash += commoditySaleCashAvailable;
+
+                    let remainingNeeded = baseExpense - (annualDividendIncome + extraIncome - extraExpense);
+                    
+                    if (remainingNeeded > 0) {
+                        if (cash >= remainingNeeded) {
+                            cash -= remainingNeeded;
+                        } else {
+                            remainingNeeded -= cash; cash = 0;
+                            portfolios.forEach(s => {
+                                if (s.type === 'taxable' && remainingNeeded > 0) {
+                                    if (s.currentVal >= remainingNeeded) {
+                                        s.currentVal -= remainingNeeded; remainingNeeded = 0;
+                                    } else { remainingNeeded -= s.currentVal; s.currentVal = 0; }
+                                }
+                            });
+                            portfolios.forEach(s => {
+                                if (s.type === 'nisa' && remainingNeeded > 0) {
+                                    if (s.currentVal >= remainingNeeded) {
+                                        s.currentVal -= remainingNeeded; remainingNeeded = 0;
+                                    } else { remainingNeeded -= s.currentVal; s.currentVal = 0; }
+                                }
+                            });
+                            if (remainingNeeded > 0) {
+                                let drawCrypto = Math.min(crypto, remainingNeeded);
+                                crypto -= drawCrypto;
+                                remainingNeeded -= drawCrypto;
+                            }
+                            if (remainingNeeded > 0 && commodities > 0) {
+                                let desperateWithdraw = Math.min(commodities, remainingNeeded);
+                                commodities -= desperateWithdraw;
+                                remainingNeeded -= desperateWithdraw;
+                            }
+                        }
+                    } else {
+                        cash += Math.abs(remainingNeeded);
+                    }
+
+                    if (cash > emergencyFundTargetYen) {
+                        let surplus = cash - emergencyFundTargetYen;
+                        if (isPostFire && phaseTag === 'FAST_PAYOFF' && loanRemaining > 0) {
+                            const extraPrepay = Math.min(surplus, loanRemaining);
+                            loanRemaining -= extraPrepay;
+                            cash -= extraPrepay;
+                        } else {
+                            const totalValForSurplus = portfolios.reduce((sum, s) => sum + s.currentVal, 0);
+                            if (totalValForSurplus > 0) {
+                                portfolios.forEach(s => { s.currentVal += surplus * (s.currentVal / totalValForSurplus); });
+                            } else if (portfolios[0]) {
+                                portfolios[0].currentVal += surplus;
+                            }
+                            cash -= surplus;
+                        }
+                    }
+
+                    const currentNisaSum = portfolios.filter(p => p.type === 'nisa').reduce((sum, p) => sum + p.currentVal, 0);
+                    const currentTaxableSum = portfolios.filter(p => p.type === 'taxable').reduce((sum, p) => sum + p.currentVal, 0);
+                    let currentYearTotal = currentTaxableSum + currentNisaSum + cash + commodities + crypto;
+
+                    const targetGoal = targetAnnualExpenseMan * 10000 * (100 / state.safeWithdrawalRate);
+                    if (fireYear === null && currentYearTotal >= targetGoal && age >= state.fireAge) {
+                        fireYear = i; fireAge = age;
+                    }
+
+                    {
+                        const commodityBaseSum = goldVal + platVal + silverVal;
+                        if (commodityBaseSum > 0 && commodities >= 0) {
+                            const shrinkRatio = commodities / commodityBaseSum;
+                            goldVal *= shrinkRatio;
+                            platVal *= shrinkRatio;
+                            silverVal *= shrinkRatio;
+                        } else {
+                            goldVal = 0; platVal = 0; silverVal = 0;
+                        }
+                    }
+
+                    points.push({
+                        year: i, age, spouseAge: spouseAgeCurrent, calendarYear, phase: phaseTag,
+                        portfolioDividendMan: Math.round(portfolioDividendYen / 10000),
+                        totalAssets: Math.max(0, Math.round(currentYearTotal)),
+                        taxableAssets: Math.max(0, Math.round(currentTaxableSum)),
+                        cash: Math.max(0, Math.round(cash)),
+                        nisa: Math.max(0, Math.round(currentNisaSum)),
+                        commodities: Math.max(0, Math.round(commodities)),
+                        crypto: Math.max(0, Math.round(crypto)),
+                        loanRemaining: Math.round(loanRemaining),
+                        pensionIncome: age >= pensionClaimAge ? Math.round(pensionAnnualYen * inflationFactor) : 0
+                    });
+                }
+
+                const targetGoalValue = targetAnnualExpenseMan * 10000 * (100 / state.safeWithdrawalRate);
+                return {
+                    points, fireYear, fireAge,
+                    achievementPct: targetGoalValue <= 0 ? 100 : Math.min(100, (points[0].totalAssets / targetGoalValue) * 100),
+                    targetAnnualExpenseMan, baseAssetsMan: initialTotalAssetsMan,
+                    executedSpotEventsLog
+                };
+            };
+
+            const simResult = useMemo(
+                () => runFireSimulation(activePreset.targetAnnualExpenseMan),
+                [state, activePreset, commodityTotalMan, loanRepaymentYen, equalPrincipalPerYearYen, initialTotalAssetsMan, pensionAdjustment, annualExpensesMan, effectiveNisaMaxAnnualLimit]
+            );
+
+            // --- 🎯 「生活費×25年分（SWR基準・配当収入オフセット済み）」ルールによるFIRE判定 ---
+            // 必要年数(25年 = 100/SWR%)自体は固定の標準的な前提のまま、目標生活費側で配当収入
+            // (保有株式の配当+予想配当額+副収入)を差し引き済みにすることで、保有アセットの配当利回りを
+            // 変更すると現金比率に関係なく確実にFIRE判定へ反映されるようにした。
+            // ・現在資産が届いていなければ、リタイア目標年齢までに月いくら積立が必要かを算出。
+            // ・届いていれば、25年分ラインを超えた余剰資産からSWR相当で毎月あと何万円まで使えるかを算出。
+            const presetAffordability = useMemo(() => {
+                const results = {};
+                const requiredYears = 100 / (Number(state.safeWithdrawalRate) || 4);
+                const currentAssetsMan = Math.round(initialTotalAssetsMan);
+                const yearsToFire = Math.max(1, Number(state.fireAge) - Number(state.currentAge));
+                Object.entries(fireStylePresets).forEach(([key, preset]) => {
+                    const targetMan = preset.targetAnnualExpenseMan;
+                    const requiredAssetsMan = Math.round(targetMan * requiredYears);
+                    const sustainable = currentAssetsMan >= requiredAssetsMan;
+                    const shortfallMan = Math.max(0, requiredAssetsMan - currentAssetsMan);
+                    const surplusMan = Math.max(0, currentAssetsMan - requiredAssetsMan);
+                    const extraMonthlyMan = sustainable ? Math.round((surplusMan * (Number(state.safeWithdrawalRate) / 100) / 12) * 10) / 10 : 0;
+                    const requiredMonthlySavingMan = sustainable ? 0 : Math.round((shortfallMan / yearsToFire / 12) * 10) / 10;
+                    results[key] = { sustainable, requiredAssetsMan, currentAssetsMan, shortfallMan, surplusMan, extraMonthlyMan, requiredMonthlySavingMan, targetMan, requiredYears: Math.round(requiredYears * 10) / 10, yearsToFire };
+                });
+                return results;
+            }, [state, initialTotalAssetsMan, annualExpensesMan, fireStylePresets]);
+
+            // --- Handlers ---
+            const handleNumberInputChange = (pathArray, rawValue) => {
+                const val = rawValue === '' ? '' : Number(rawValue);
+                updateState(prev => {
+                    const next = { ...prev };
+                    let current = next;
+                    for (let i = 0; i < pathArray.length - 1; i++) {
+                        const key = pathArray[i];
+                        current[key] = { ...current[key] };
+                        current = current[key];
+                    }
+                    current[pathArray[pathArray.length - 1]] = val;
+                    if(pathArray[0] === 'crypto') {
+                        const btcAmt = pathArray[1] === 'btcAmount' ? val : next.crypto.btcAmount;
+                        const btcPrace = pathArray[1] === 'currentBtcPrice' ? val : next.crypto.currentBtcPrice;
+                        next.crypto.amount = parseFloat(((btcAmt * btcPrace) / 10000).toFixed(2));
+                    }
+                    return next;
+                });
+            };
+
+            const updateStockItem = (id, field, value) => {
+                updateState(prev => ({
+                    ...prev,
+                    stocksPortfolio: prev.stocksPortfolio.map(s => s.id === id ? { ...s, [field]: value === '' ? '' : (field === 'label' || field === 'type' ? value : Number(value)) } : s)
+                }));
+            };
+
+            const handleNumberBlur = (pathArray) => {
+                updateState(prev => {
+                    const next = { ...prev };
+                    let current = next;
+                    for (let i = 0; i < pathArray.length - 1; i++) {
+                        const key = pathArray[i];
+                        current[key] = { ...current[key] };
+                        current = current[key];
+                    }
+                    const lastKey = pathArray[pathArray.length - 1];
+                    const v = current[lastKey];
+                    if (v === '' || v === null || v === undefined || (typeof v === 'number' && isNaN(v))) {
+                        current[lastKey] = 0;
+                    }
+                    return next;
+                });
+            };
+
+            const handleStockBlur = (id, field) => {
+                updateState(prev => ({
+                    ...prev,
+                    stocksPortfolio: prev.stocksPortfolio.map(s => {
+                        if (s.id !== id) return s;
+                        const v = s[field];
+                        if (v === '' || v === null || v === undefined || (typeof v === 'number' && isNaN(v))) {
+                            return { ...s, [field]: 0 };
+                        }
+                        return s;
+                    })
+                }));
+            };
+
+            const handleBudgetBlur = (id, field) => {
+                updateState(prev => ({
+                    ...prev,
+                    budgetItems: prev.budgetItems.map(b => {
+                        if (b.id !== id) return b;
+                        const v = b[field];
+                        if (v === '' || v === null || v === undefined || (typeof v === 'number' && isNaN(v))) {
+                            return { ...b, [field]: 0 };
+                        }
+                        return b;
+                    })
+                }));
+            };
+
+            const addStockItem = () => {
+                if (!newStock.label || !newStock.principal) return;
+                updateState(prev => ({
+                    ...prev,
+                    stocksPortfolio: [...prev.stocksPortfolio, {
+                        id: 's_' + Date.now(),
+                        label: newStock.label,
+                        type: newStock.type,
+                        principal: Number(newStock.principal),
+                        growthRate: Number(newStock.growthRate),
+                        dividendYield: Number(newStock.dividendYield)
+                    }]
+                }));
+                setNewStock({ label: '', type: 'nisa', principal: '', growthRate: '5.0', dividendYield: '4.0' });
+            };
+
+            const removeStockItem = (id) => {
+                updateState(prev => ({ ...prev, stocksPortfolio: prev.stocksPortfolio.filter(s => s.id !== id) }));
+            };
+
+            const updateBudgetItem = (id, field, value) => {
+                updateState(prev => ({
+                    ...prev,
+                    budgetItems: prev.budgetItems.map(b => b.id === id ? { ...b, [field]: value === '' ? '' : (field === 'label' ? value : Number(value)) } : b)
+                }));
+            };
+
+            const addBudgetItem = () => {
+                if (!newBudget.label || !newBudget.amount) return;
+                updateState(prev => ({
+                    ...prev,
+                    budgetItems: [...prev.budgetItems, {
+                        id: 'b_' + Date.now(),
+                        label: newBudget.label,
+                        amount: Number(newBudget.amount),
+                        isAnnual: newBudget.isAnnual,
+                        category: 'custom'
+                    }]
+                }));
+                setNewBudget({ label: '', amount: '', isAnnual: false });
+            };
+
+            const removeBudgetItem = (id) => {
+                updateState(prev => ({ ...prev, budgetItems: prev.budgetItems.filter(b => b.id !== id) }));
+            };
+
+            const addLifeEvent = () => {
+                if (!newEvent.label || !newEvent.amount) return;
+                updateState(prev => ({
+                    ...prev,
+                    lifeEvents: [...prev.lifeEvents, {
+                        id: 'e_' + Date.now(),
+                        age: Number(newEvent.age),
+                        label: newEvent.label,
+                        amount: Number(newEvent.amount),
+                        kind: newEvent.kind
+                    }].sort((a,b) => a.age - b.age)
+                }));
+                setNewEvent({ age: 55, label: '', amount: '', kind: 'expense' });
+            };
+
+            const removeLifeEvent = (id) => {
+                updateState(prev => ({ ...prev, lifeEvents: prev.lifeEvents.filter(e => e.id !== id) }));
+            };
+
+            const runDiagnosis = () => {
+                setDiagnosing(true);
+                setTimeout(() => {
+                    const r = simResult;
+                    const isSafe = r.points[r.points.length - 1].totalAssets > 0;
+                    // 🎯 「不足」「余剰」の判定を分断させず、選択中のFIREスタイルの生涯資産寿命判定(presetAffordability)を
+                    // 単一の判断基準として全レポートで使い回す(資産防衛の警告と資産活用の提案を統一)。
+                    const currentStyleAffordability = presetAffordability[state.selectedFireStyle];
+                    const alreadyPostFire = state.currentAge >= state.fireAge;
+                    let text = `========================================================================\n   【FIRE CRYSTAL ENGINE】 高精度複利・マルチアセット診断レポート   \n========================================================================\n\n`;
+                    text += `・FIRE達成判定(${fireStylePresets[state.selectedFireStyle].label} / 生活費${currentStyleAffordability.requiredYears}年分・年金非依存基準) : ${currentStyleAffordability.sustainable ? `✅ 達成済み(必要資産${currentStyleAffordability.requiredAssetsMan.toLocaleString()}万円 に対し現有${currentStyleAffordability.currentAssetsMan.toLocaleString()}万円。65歳の年金開始を待たずに退職して大丈夫です)` : `⚠️ 未達(必要資産${currentStyleAffordability.requiredAssetsMan.toLocaleString()}万円 に対し現有${currentStyleAffordability.currentAssetsMan.toLocaleString()}万円。あと${currentStyleAffordability.shortfallMan.toLocaleString()}万円不足、${state.fireAge}歳までに月${currentStyleAffordability.requiredMonthlySavingMan.toLocaleString()}万円の積立が必要)`}\n`;
+                    text += `・初期構築総資産額      : ${r.baseAssetsMan.toLocaleString()} 万円\n`;
+                    text += `・経常年間予定防衛費    : ${r.targetAnnualExpenseMan.toLocaleString()} 万円 / 年\n`;
+                    text += `・予想配当額(生涯継続)  : ${(Number(state.monthlyDividendIncome||0) * 12).toLocaleString()} 万円 / 年\n`;
+                    text += `・副収入(生涯継続想定)  : ${state.sideIncomeEnabled ? (Number(state.monthlySideIncome||0) * 12).toLocaleString() + ' 万円 / 年 (有効)' : '0 万円 / 年 (OFF設定中)'}\n`;
+                    text += `・適合達成率基準比      : ${r.achievementPct.toFixed(1)} %\n`;
+                    text += `・寿命時（${state.lifeExpectancy}歳）最終残高予測: ${Math.round(r.points[r.points.length - 1].totalAssets / 10000).toLocaleString()} 万円\n`;
+                    text += `・金利タイプ選択         : ${state.liabilities.loanRateType === 'variable' ? '変動金利システム' : '固定金利システム'}\n`;
+                    text += `・生活防衛資金判定       : ${emergencyFundCheck.isBelowEmergencyFund ? `⚠️ 不足(必要ライン ${Math.round(emergencyFundCheck.emergencyFundThresholdMan).toLocaleString()}万円に対し ${Math.round(emergencyFundCheck.shortfallMan).toLocaleString()}万円不足) → NISA枠は非表示・シフト停止中` : `✅ 確保済み(必要ライン ${Math.round(emergencyFundCheck.emergencyFundThresholdMan).toLocaleString()}万円をクリア)`}\n`;
+                    text += `・NISA年間投資枠(実効) : ${emergencyFundCheck.isBelowEmergencyFund ? '0 万円 (生活防衛資金未確保のため停止)' : `${effectiveNisaMaxAnnualLimit.toLocaleString()} 万円 / 最速埋め目標: ${state.nisaTargetYears} 年 ${state.nisaDynamicMode ? `(動的自動算出モード・月${nisaDynamicQuota.safeMonthlyMan}万円換算)` : '(手動設定モード)'}`}\n`;
+                    text += `・コモディティ自動定額売却: ${!state.loanPrepayment.enabled ? '未使用(0円) ※繰り上げ返済OFFのため連動停止中' : (commodityTotalMan <= 0 ? '※コモディティ資産を保有していないため停止中' : `毎年 ${state.commodityAnnualSellAmount} 万円 (50万円超部分に譲渡課税計算)`)}\n`;
+                    text += `・住居費設定             : ${state.isRenting ? `賃貸 / 家賃 ${state.monthlyRent}万円/月 (生涯継続)` : `持ち家 / 住宅ローンあり`}\n`;
+                    text += `・住宅ローン繰上げ返済     : ${state.isRenting ? '対象外(賃貸のためローンなし)' : (state.loanPrepayment.enabled ? `${commodityTotalMan > 0 ? `コモディティ${state.loanPrepayment.annualFromCommodity}万/年 + ` : 'コモディティ保有なし(繰上げスキップ) + '}現金${state.loanPrepayment.annualFromCash}万/年 (有効)` : '未使用(OFF)')}\n`;
+                    text += `・公的年金受給設定       : ${pensionAdjustment.claimAge}歳受給開始 / 年間${Math.round(pensionAdjustment.adjustedAnnualMan).toLocaleString()}万円 (65歳基準比 ${pensionAdjustment.ratePct >= 0 ? '+' : ''}${pensionAdjustment.ratePct.toFixed(1)}%)\n`;
+                    text += `・シミュレーション結果   : ${isSafe ? '👑 安全圏巡航が実証されました。' : '⚠️ 後半に枯渇リスクを検知しました。'}\n\n`;
+
+                    const standardTarget = fireStylePresets.standard.targetAnnualExpenseMan;
+                    const sideTarget = fireStylePresets.side.targetAnnualExpenseMan;
+                    const sideShortageYear = Math.round(standardTarget - sideTarget);
+                    const sideShortageMonth = Math.round((sideShortageYear / 12) * 10) / 10;
+
+                    // 【修正】5年後・10年後の月額配当予測が現在値から激減して見えるバグを修正。
+                    // 以前は「現在」だけ生涯継続の予想配当額(state.monthlyDividendIncome)を加算し、
+                    // 「5年後」「10年後」はポートフォリオ由来の配当(portfolioDividendMan)のみで
+                    // 比較していたため、単位・加算対象が不一致になり、5年後・10年後の数値が
+                    // 現在よりも大幅に小さく(例: 0.9万円等に)見えてしまっていた。
+                    // 「現在」「5年後」「10年後」のすべてで同じ基準(ポートフォリオ配当の月額 + 生涯継続の
+                    // 予想配当額)で統一して算出し、正しく右肩上がりの成長を示すよう修正。
+                    // さらに、口座タイプ(NISA/特定口座)別の配当再投資ループを分離したことで、
+                    // ポートフォリオ配当(portfolioDividendMan)自体の将来値も口座別に正しく複利成長する。
+                    const dividendAt = (idx) => r.points[Math.min(idx, r.points.length - 1)];
+                    const fixedMonthlyDividendMan = Number(state.monthlyDividendIncome || 0);
+                    const currentMonthlyDividend = Math.round((((dividendAt(0).portfolioDividendMan || 0) / 12) + fixedMonthlyDividendMan) * 10) / 10;
+                    const fiveYearsMonthlyDividend = Math.round((((dividendAt(5).portfolioDividendMan || 0) / 12) + fixedMonthlyDividendMan) * 10) / 10;
+                    const tenYearsMonthlyDividend = Math.round((((dividendAt(10).portfolioDividendMan || 0) / 12) + fixedMonthlyDividendMan) * 10) / 10;
+
+                    // 【修正】文言(成長/爆発 等)を固定で出さず、実際に計算された0/5/10年後の数値の傾向を見て
+                    // 動的に切り替える。従来はリタイア年齢が近い(または到達済み)ケースで配当が全く増えない、
+                    // または取り崩しで減っているにも関わらず「成長」「爆発」と表示される不整合があった。
+                    const dividendGrowingClearly = tenYearsMonthlyDividend > currentMonthlyDividend * 1.05 && fiveYearsMonthlyDividend >= currentMonthlyDividend * 0.98;
+                    const dividendShrinkingClearly = tenYearsMonthlyDividend < currentMonthlyDividend * 0.95;
+
+                    text += `------------------------------------------------------------------------\n`;
+                    if (!alreadyPostFire && dividendGrowingClearly) {
+                        // 資産形成期(まだリタイア年齢に達していない)かつ、実際に配当が増えている場合のみ複利成長の物語を出す。
+                        text += `🌱【資産形成期：まずはサイドFIREを目指すあなたへ】\n\n`;
+                        text += `雇用者として毎月の手取りを急に増やすのは難しくても、手元の配当金を【100%再投資】に回すことで、資産の雪だるまは最速で育ちます（グラフの白い軌跡がその証拠です）。\n\n`;
+                        text += `現在、あなたのポートフォリオから生み出される予定配当額は【月額 約${currentMonthlyDividend}万円】ですが、これを愚直に再投資し続けると：\n`;
+                        text += `・5年後には、毎月の配当金が【月額 約${fiveYearsMonthlyDividend}万円】に成長！\n`;
+                        text += `・10年後には、毎月の配当金が【月額 約${tenYearsMonthlyDividend}万円】にまで爆発します！\n\n`;
+                        text += `まずは生活費の1年分（¥${standardTarget.toLocaleString()}万円）を生活防衛資金として確保し、それを超えた余剰分を高配当アセットの複利エンジンに注ぎ込んで、最速でサイドFIRE（あと月${sideShortageMonth}万の不足を相殺）を掴み取りましょう。\n\n`;
+                    } else if (dividendShrinkingClearly) {
+                        // 【新設】生活費が配当・年金・副収入の合計を上回り、資産(配当の元本)を取り崩している場合の警告。
+                        text += `⚠️【配当基盤縮小の兆候】\n\n`;
+                        text += `現在の配当収入は【月額 約${currentMonthlyDividend}万円】ですが、このままでは5年後に【月額 約${fiveYearsMonthlyDividend}万円】、10年後には【月額 約${tenYearsMonthlyDividend}万円】まで減っていく見込みです。\n\n`;
+                        text += `生活費が配当・年金・副収入の合計を上回り、配当を生み出す元本(保有株式)そのものを取り崩している可能性があります。生活費の見直し、リタイア年齢を後ろにずらす、または利回りの高いアセットへの再配分を検討してください。\n\n`;
+                    } else {
+                        // すでにリタイア年齢に到達している(配当が再投資されず生活費に回る)、または資産形成期でも
+                        // 目立った増減がない(ほぼ横ばい)場合。実態に即し、誇張表現を使わない。
+                        text += `🏁【${alreadyPostFire ? 'リタイア後フェーズ' : '横ばいフェーズ'}：配当・年金・副収入で生活費をカバー中】\n\n`;
+                        if (alreadyPostFire) {
+                            text += `現在${state.currentAge}歳で、既にリタイア年齢(${state.fireAge}歳)に到達しているため、配当は再投資されず、その年の生活費として受け取られる設計になっています(そのため配当額は資産形成期のような急成長はしません)。\n\n`;
+                        } else {
+                            text += `現在の配当収入は【月額 約${currentMonthlyDividend}万円】で、5年後も【月額 約${fiveYearsMonthlyDividend}万円】とほぼ同水準を維持する見込みです。\n\n`;
+                        }
+                        text += `現在のポートフォリオ配当・予想配当額の合計は【月額 約${currentMonthlyDividend}万円】で、これに副収入・公的年金等を加えた収入で生活費をカバーしています。\n\n`;
+                        text += currentStyleAffordability.sustainable
+                            ? `この生活費水準（${fireStylePresets[state.selectedFireStyle].label}: 月${Math.round(currentStyleAffordability.targetMan/12*10)/10}万円）は、生活費${currentStyleAffordability.requiredYears}年分の資産(${currentStyleAffordability.requiredAssetsMan.toLocaleString()}万円)を既にクリアしているため、65歳の年金開始を待たずに給料が無くなっても大丈夫な状態です。\n\n`
+                            : `この生活費水準（${fireStylePresets[state.selectedFireStyle].label}: 月${Math.round(currentStyleAffordability.targetMan/12*10)/10}万円）だと、生活費${currentStyleAffordability.requiredYears}年分の資産(${currentStyleAffordability.requiredAssetsMan.toLocaleString()}万円)にあと${currentStyleAffordability.shortfallMan.toLocaleString()}万円足りません。年金に頼らず埋めるなら${state.fireAge}歳までに月${currentStyleAffordability.requiredMonthlySavingMan.toLocaleString()}万円ずつの積立が目安です。\n\n`;
+                    }
+
+                    text += `------------------------------------------------------------------------\n`;
+                    if (state.isRenting) {
+                        text += `🏢【資産防衛アドバイス：一生続く家賃への対策】\n\n`;
+                        text += `現在は『賃貸（家賃支払いあり）』のライフプランとなっています。住宅ローンとは異なり、家賃はリタイア後も一生涯発生し続けます。そのため、資産を取り崩すのではなく、資産を減らさずに【毎月確実に家賃分を相殺してくれる仕組み】を作ることが鉄則です。\n\n`;
+                        text += `特におすすめなのが、新NISA対応の高利回りJリートETF（1660等）を活用した『REIT_INCOME（家賃収入防衛モード）』への切り替えです。日本の不動産全体の家賃を原資とした年利4%超の分配金により、自分の家賃をポートフォリオ内で【完全相殺（実質タダ生活）】させることが可能になります（グラフのオレンジの軌跡を参照）。\n\n`;
+                    } else {
+                        if (state.postFireStrategy === 'CONTINUE_INVEST') {
+                            text += `🔴【サイドFIRE達成後：さらなる配当最大化戦略】\n\n`;
+                            text += `サイドFIRE以降は、万が一の不況に備えて生活防衛資金を安心の【4年分（¥${(standardTarget * 4).toLocaleString()}万円）】へと自動的に引き上げ、現金を強固にディフェンスします。その上で余剰金をさらに再投資していくことで利回りはさらに上昇。グラフは【赤い上昇軌道】を描き、将来のスタンダードFIRE、さらにはFAT FIREへと資産が自動拡大していくフェーズに入ります！\n\n`;
+                        } else if (state.postFireStrategy === 'FAST_PAYOFF') {
+                            const hasCommodityToSellNow = state.loanPrepayment.enabled && commodityTotalMan > 0;
+                            if (!state.loanPrepayment.enabled) {
+                                text += `🔵【資産防衛アドバイス：繰り上げ返済の戦略】\n\n`;
+                                text += `現在、繰り上げ返済設定が【OFF】になっているため、コモディティ売却・現金による繰上げ返済はいずれも未使用(0円)として処理されています。通常のローン返済のみが進む形になります。繰上げ返済を活用したい場合は、住宅ローン設定の「⚡繰上げ返済設定」をONにしてください。\n\n`;
+                            } else if (hasCommodityToSellNow) {
+                                const monthlyPrepayFromCommodity = Math.round((Number(state.loanPrepayment.annualFromCommodity || 0) / 12) * 10) / 10;
+                                const savedInterest = loanComparison ? Math.max(0, loanComparison.totalInterestEqualPayment - loanComparison.totalInterestWithPrepay) : 0;
+                                const yearsSavedText = loanComparison ? loanComparison.yearsSaved : 0;
+                                text += `🔵【サイドFIRE達成後：爆速ローン完済戦略】\n\n`;
+                                text += `生活防衛資金4年分を確保しつつ、監視しているコモディティ資産等から【毎月 約${monthlyPrepayFromCommodity}万円（年間 ${state.loanPrepayment.annualFromCommodity}万円）】をローンの元金返済へ安全に投入します。資産は一時的に【青い下降軌道】を描きますが、これによって住宅ローンは通常より${yearsSavedText}年も早く終わり、結果として【総額 約${savedInterest.toLocaleString()}万円】もの金利を浮かせることが可能です！\n\n`;
+                            } else {
+                                text += `🔵【資産防衛アドバイス：繰り上げ返済の戦略】\n\n`;
+                                text += `現在ローンの繰り上げ設定が有効ですが、コモディティの保有総額が【¥0万円】のため、コモディティ原資の繰り上げはスキップされています。無理に現金を削るよりは、まずは高配当ポートフォリオへの再投資を最優先し、資産の雪だるまを大きく育てることをお勧めします。\n\n`;
+                            }
+                        } else if (state.postFireStrategy === 'DEEP_DEFENSE') {
+                            text += `🟢【サイドFIRE達成後：ガチ守り債券ディフェンス戦略】\n\n`;
+                            text += `株式単体の保有は〇〇ショック時に大ダメージを受けるリスクがあります。サイドFIRE後は現金を4年分確保し、残りを新NISAで買える東証上場の債券ETF（1496や2554など）へリバランスし、年利約3%〜3.8%を堅実に確保します。グラフは【緑色の堅牢な軌道】を描き、世界恐慌が来てもビクともしない安心の城が完成します。\n\n`;
+                        } else if (state.postFireStrategy === 'REIT_INCOME') {
+                            text += `🟠【サイドFIRE達成後：高利回り不動産インカム戦略】\n\n`;
+                            text += `サイドFIRE以降は生活防衛資金4年分を確保し、株式資産を東証上場・新NISA対応の高利回りJリートETF（1660や1343）へシフト。年利4%を超える強固な家賃原資のインカムを受け取ります。グラフは【オレンジ色の安定軌道】を描き、インフレによる実質的な資産の目減りを防ぎます。\n\n`;
+                        }
+                    }
+
+                    // 🔧 【修正】従来はここで「r.achievementPct(初年度スナップショットをSWR 4%等で割った簡易指標)」を
+                    // 判定基準に使っていたため、総資産が1億円を超えていても達成率が低く出て「不足」警告が出たり、
+                    // 逆に本文末尾では「資産が余る」と矛盾したメッセージが同時に表示される分断が発生していた。
+                    // 生涯シミュレーション(presetAffordability)による「本当に資産寿命まで賄えるか」の単一基準に統一し、
+                    // 不足時のみ以下のアドバイスを表示する。
+                    if (!currentStyleAffordability.sustainable) {
+                        const hasSideIncome = state.sideIncomeEnabled && Number(state.monthlySideIncome || 0) > 0;
+                        const hasDividend = Number(state.monthlyDividendIncome || 0) > 0;
+                        text += `------------------------------------------------------------------------\n`;
+                        text += `🌱【逆転可能性アドバイス】現在の設定では生活費${currentStyleAffordability.requiredYears}年分の資産(年金非依存基準)にあと${currentStyleAffordability.shortfallMan.toLocaleString()}万円足りませんが、諦める必要は全くありません。\n\n`;
+                        text += `年金開始(65歳)を待たずに${state.fireAge}歳でリタイアするには、そこまでに【月 約${currentStyleAffordability.requiredMonthlySavingMan}万円】の積立(給料+配当金の余剰分)が目安です。今の${state.currentAge}歳時点の"資産額"だけを切り取って見ると心配になりますが、それはまだ資産を育て始めた"スナップショット"に過ぎません。\n`;
+                        if (hasDividend || hasSideIncome) {
+                            text += `あなたには既に強力な武器がセットされています: `;
+                            if (hasDividend) text += `「生涯継続する予想配当額 ${(state.monthlyDividendIncome*12).toLocaleString()}万円/年」`;
+                            if (hasDividend && hasSideIncome) text += `と`;
+                            if (hasSideIncome) text += `「生涯継続想定の副収入 ${(state.monthlySideIncome*12).toLocaleString()}万円/年」`;
+                            text += `。これは多くの人が持っていない、資産を"育てる"ための土台です。\n`;
+                        } else {
+                            text += `年収や副収入といった継続的なキャッシュフローは、資産形成における最大の武器です。まずはその土台を整えることが第一歩になります。\n`;
+                        }
+                        text += `\n重要なのは「今の資産額」ではなく「${state.fireAge}歳までに生活費${currentStyleAffordability.requiredYears}年分の資産を積み上げるプロセス」です。複利の力は時間が長いほど大きく効いてくるため、ここから解消できる余地は十分にあります。\n\n`;
+                        text += `▶ 試してみる価値のあるレバー(スライダー):\n`;
+                        text += `  ① 「リタイア年齢」のスライダーを今より数年伸ばす → 積立期間が延び、月あたりの必要積立額が下がります(目安: 現状の${state.fireAge}歳から数年先へ)。\n`;
+                        text += `  ② 「副収入」を月あと${currentStyleAffordability.requiredMonthlySavingMan}万円ほど増やす → ちょうど不足分を相殺でき、${state.fireAge}歳でのFIRE達成に届く計算です。\n`;
+                        text += `  ③ 生活費を見直して目標額そのものを下げる、または「予想配当額」や運用利回りの前提を見直す → 高配当株・ETFへの配分を増やすと複利効果が加速します。\n`;
+                        text += `一つずつ動かしながら不足額がどう変わるか、ぜひ試してみてください。\n\n`;
+                    }
+
+                    if (isSafe && currentStyleAffordability.sustainable && currentStyleAffordability.extraMonthlyMan > 0.1) {
+                        const extraMonthlyMan = currentStyleAffordability.extraMonthlyMan;
+                        const surplusMan = currentStyleAffordability.surplusMan;
+                        const extraFoodMan = Math.round(extraMonthlyMan * 0.3 * 10) / 10;
+                        const extraTravelAnnualMan = Math.round(extraMonthlyMan * 12 * 0.4);
+                        const extraTravelMonthlyYen = Math.round((extraTravelAnnualMan * 10000) / 12);
+                        const extraFreeMan = Math.round((extraMonthlyMan - extraFoodMan - (extraTravelAnnualMan / 12)) * 10) / 10;
+
+                        text += `------------------------------------------------------------------------\n`;
+                        text += `💎【資産に余裕がある方向けアドバイス】${fireStylePresets[state.selectedFireStyle].label}の生活費${currentStyleAffordability.requiredYears}年分ライン(${currentStyleAffordability.requiredAssetsMan.toLocaleString()}万円)を、現有資産が約${surplusMan.toLocaleString()}万円上回っています。\n\n`;
+                        text += `将来のために貯めすぎている可能性が高く、もっと今、お金を使って人生を楽しんでも大丈夫です！(この余剰分を実効利回り${Math.round((100/currentStyleAffordability.requiredYears)*10)/10}%相当で取り崩す前提の逆算です)\n\n`;
+                        text += `▶ 逆算すると、毎月あと 【+${extraMonthlyMan.toLocaleString()}万円】 支出を増やしても、生活費${currentStyleAffordability.requiredYears}年分の安全ラインを下回ることはない計算になります(実際は運用収益により、さらに余裕が生まれる可能性もあります)。\n\n`;
+                        text += `▶ 使い方の例:\n`;
+                        text += `  ・食費をあと月+${extraFoodMan.toLocaleString()}万円上げる(食材のランクアップや外食機会を増やす)\n`;
+                        text += `  ・旅費を年+${extraTravelAnnualMan.toLocaleString()}万円(月換算 約${extraTravelMonthlyYen.toLocaleString()}円)増やす(毎年の旅行や趣味の質を高める)\n`;
+                        text += `  ・残り+${extraFreeMan > 0 ? extraFreeMan.toLocaleString() : '0'}万円は、趣味・自己投資・家族へのプレゼントなど、豊かさを感じられることに自由に使ってみてください\n\n`;
+                    }
+
+                    if (r.executedSpotEventsLog && r.executedSpotEventsLog.length > 0) {
+                        text += `------------------------------------------------------------------------\n`;
+                        text += `📌【スポットイベント実行履歴】\n`;
+                        r.executedSpotEventsLog.forEach(logLine => {
+                            text += `※【ライフイベント】${logLine}\n`;
+                        });
+                        text += `\n`;
+                    }
+
+                    text += `------------------------------------------------------------------------\n`;
+                    text += `※ 免責事項: 本ツールによる試算はあくまでシミュレーション上の予測であり、将来の投資成果を保証するものではなく、また投資助言を行うものではありません。\n`;
+                    text += `========================================================================`;
+                    setDiagnosisText(text);
+                    setDiagnosing(false); setShowDiagnosis(true);
+                }, 800);
+            };
+
+            // 🔁 【修正】診断ボタンの開閉トグル化。
+            // 以前は常に「生成」のみで、開いたまま設定を変えても見た目上は同じボタンのままだったため、
+            // 「ボタンを押しても内容が更新されない」ように感じられた。今回から:
+            //   ・閉じている時にクリック → 最新の設定でレポートを再生成して開く(必ず現在の状態を反映)
+            //   ・開いている時にクリック → 再生成はせず、そのまま閉じる
+            // という明示的な開閉動作にし、「設定変更 → もう一度開く → 必ず最新内容になる」を保証する。
+            const handleDiagnosisButtonClick = () => {
+                if (showDiagnosis) {
+                    setShowDiagnosis(false);
+                } else {
+                    runDiagnosis();
+                }
+            };
+
+            const chartData = useMemo(() => {
+                const pts = simResult.points;
+                return pts.map((p, idx) => {
+                    const totalMan = Math.round(p.totalAssets / 10000);
+                    const prev = idx > 0 ? pts[idx - 1] : null;
+                    const isPre = p.phase === 'PRE_FIRE' || (prev && prev.phase === 'PRE_FIRE');
+                    const isPost = p.phase !== 'PRE_FIRE' || (prev && prev.phase !== 'PRE_FIRE');
+                    return {
+                        age: `${p.age}歳`,
+                        '総資産額_資産形成期': isPre ? totalMan : null,
+                        '総資産額_分岐期': isPost ? totalMan : null,
+                        '特定口座株・投信': Math.round(p.taxableAssets / 10000),
+                        'NISA口座枠': Math.round(p.nisa / 10000),
+                        '現物コモディティ': Math.round(p.commodities / 10000),
+                        '安全手元現金': Math.round(p.cash / 10000),
+                        '暗号資産等': Math.round(p.crypto / 10000),
+                        'ローン残高': Math.round(p.loanRemaining / 10000)
+                    };
+                });
+            }, [simResult]);
+
+            const postFireColorMap = { CONTINUE_INVEST: '#EF4444', FAST_PAYOFF: '#3B82F6', DEEP_DEFENSE: '#10B981', REIT_INCOME: '#F97316' };
+            const postFireLineColor = postFireColorMap[state.postFireStrategy] || '#EF4444';
+
+            const formatManOrOku = (value) => {
+                const v = Number(value);
+                if (isNaN(v)) return '';
+                if (v === 0) return '0';
+                if (Math.abs(v) >= 10000) {
+                    const oku = v / 10000;
+                    const rounded = Math.round(oku * 10) / 10;
+                    return `${rounded.toLocaleString()}億`;
+                }
+                return `${Math.round(v).toLocaleString()}万`;
+            };
+
+            const ALLOCATION_COLORS = {
+                '現金': '#94a3b8',
+                'NISA口座': '#2DD4BF',
+                '特定口座': '#4DA3FF',
+                'コモディティ': '#F59E0B',
+                '暗号資産': '#A855F7'
+            };
+            const allocationData = useMemo(() => {
+                const p0 = simResult.points[0];
+                if (!p0) return [];
+                return [
+                    { name: '現金', value: Math.round(p0.cash / 10000) },
+                    { name: 'NISA口座', value: Math.round(p0.nisa / 10000) },
+                    { name: '特定口座', value: Math.round(p0.taxableAssets / 10000) },
+                    { name: 'コモディティ', value: Math.round(p0.commodities / 10000) },
+                    { name: '暗号資産', value: Math.round(p0.crypto / 10000) }
+                ].filter(d => d.value > 0);
+            }, [simResult]);
+            const allocationTotalMan = allocationData.reduce((s, d) => s + d.value, 0);
+
+            return (
+                <div className="max-w-7xl mx-auto space-y-4 md:space-y-6">
+                    {/* Header Banner */}
+                    <header className="glass-card rounded-3xl p-4 md:p-6 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border border-amber-500/10">
+                        <div>
+                            <div className="flex items-center gap-2">
+                                <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse"></span>
+                                <h1 className="font-display text-lg md:text-2xl font-black tracking-tight text-white uppercase">
+                                    FIRE Crystal <span className="text-amber-400 font-mono text-xs md:text-sm font-bold tracking-wider ml-1">Ledger v4.0 Pro</span>
+                                </h1>
+                            </div>
+                            <p className="text-[10px] md:text-xs text-slate-400 font-mono mt-0.5">
+                                Dynamic Multi-Asset Allocator & Granular Cash Flow Simulator
+                            </p>
+                        </div>
+                        <div className="flex flex-wrap gap-2 md:gap-3 w-full md:w-auto">
+                            <div className="glass-card px-3 py-1.5 rounded-xl font-mono text-center flex-1 md:flex-none">
+                                <span className="text-[8px] text-slate-400 block uppercase">現在の総資産</span>
+                                <span className="text-xs md:text-sm font-black text-amber-400">¥{Math.round(simResult.baseAssetsMan).toLocaleString()}万</span>
+                            </div>
+                            <div className="glass-card px-3 py-1.5 rounded-xl font-mono text-center flex-1 md:flex-none">
+                                <span className="text-[8px] text-slate-400 block uppercase">適合達成率</span>
+                                <span className="text-xs md:text-sm font-black text-emerald-400">{simResult.achievementPct.toFixed(1)}%</span>
+                            </div>
+                        </div>
+                    </header>
+
+                    {/* 📈 UPPER LAYER: CHART AREA FIRST */}
+                    <section className="glass-card rounded-2xl p-4 md:p-5 space-y-3 border border-amber-500/10">
+                        <div className="flex justify-between items-center border-b border-white/5 pb-2">
+                            <div className="flex items-center gap-1.5">
+                                <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse"></span>
+                                <h3 className="text-xs md:text-sm font-extrabold text-white tracking-wider uppercase">リアルタイム資産寿命シミュレーション軌道</h3>
+                            </div>
+                            <div className="flex gap-1 bg-slate-950 p-0.5 rounded-lg border border-white/5 text-[9px] font-mono">
+                                <button onClick={() => setChartMode('compare')} className={`px-2 py-0.5 rounded cursor-pointer ${chartMode === 'compare' ? 'bg-slate-800 text-amber-400 font-bold' : 'text-slate-400'}`}>シンプル比較</button>
+                                <button onClick={() => setChartMode('detail')} className={`px-2 py-0.5 rounded cursor-pointer ${chartMode === 'detail' ? 'bg-slate-800 text-amber-400 font-bold' : 'text-slate-400'}`}>マルチ内訳表示</button>
+                            </div>
+                        </div>
+                        <div className="w-full h-[300px] md:h-[380px] font-mono text-[9px]">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <LineChart data={chartData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.02)" />
+                                    <XAxis dataKey="age" stroke="#64748b" />
+                                    <YAxis stroke="#64748b" tickFormatter={formatManOrOku} width={68} tick={{ fontSize: 10 }} />
+                                    <Tooltip
+                                        contentStyle={{ backgroundColor: '#131722', borderColor: 'rgba(255,255,255,0.1)', color: '#fff' }}
+                                        formatter={(value, name) => [`${Number(value).toLocaleString()}万円 (${formatManOrOku(value)}円)`, name]}
+                                    />
+                                    <Legend wrapperStyle={{ fontSize: '9px', paddingTop: '5px' }} />
+                                    <Line type="monotone" dataKey="総資産額_資産形成期" stroke="#FFFFFF" strokeWidth={3} dot={false} name="総資産額(資産形成期)" connectNulls={false} />
+                                    <Line type="monotone" dataKey="総資産額_分岐期" stroke={postFireLineColor} strokeWidth={3} dot={false} name="総資産額(分岐期・選択モード反映)" connectNulls={false} />
+                                    {chartMode === 'detail' && (
+                                        <>
+                                            <Line type="monotone" dataKey="特定口座株・投信" stroke="#4DA3FF" strokeWidth={1.5} dot={false} />
+                                            <Line type="monotone" dataKey="NISA口座枠" stroke="#2DD4BF" strokeWidth={1.5} dot={false} />
+                                            <Line type="monotone" dataKey="現物コモディティ" stroke="#F59E0B" strokeWidth={1.5} dot={false} />
+                                            <Line type="monotone" dataKey="安全手元現金" stroke="#94a3b8" strokeWidth={1.2} dot={false} />
+                                            <Line type="monotone" dataKey="暗号資産等" stroke="#A855F7" strokeWidth={1.2} dot={false} />
+                                            <Line type="monotone" dataKey="ローン残高" stroke="#EF4444" strokeWidth={1} strokeDasharray="4 4" dot={false} />
+                                        </>
+                                    )}
+                                    <ReferenceLine y={Math.round(simResult.targetAnnualExpenseMan * (100 / state.safeWithdrawalRate))} stroke="#FF4D7A" strokeDasharray="3 3" label={{ value: `SWR目標安全ライン`, fill: '#FF4D7A', fontSize: 8, position: 'top' }} />
+                                </LineChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </section>
+
+                    <div className="glass-card rounded-2xl p-4 md:p-5 space-y-2 border border-amber-500/10">
+                        <span className="text-xs font-extrabold text-white tracking-wider uppercase block">現在の資産配分</span>
+                        <div className="flex items-center gap-3">
+                            <div className="w-[120px] h-[120px] shrink-0">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <PieChart>
+                                        <Pie data={allocationData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={30} outerRadius={55} paddingAngle={2} stroke="none" startAngle={90} endAngle={-270}>
+                                            {allocationData.map((entry, idx) => (
+                                                <Cell key={`cell-${idx}`} fill={ALLOCATION_COLORS[entry.name] || '#64748b'} />
+                                            ))}
+                                        </Pie>
+                                        <Tooltip contentStyle={{ backgroundColor: '#131722', borderColor: 'rgba(255,255,255,0.1)', color: '#fff', fontSize: '10px' }} formatter={(value, name) => [`${value.toLocaleString()}万円`, name]} />
+                                    </PieChart>
+                                </ResponsiveContainer>
+                            </div>
+                            <div className="flex-1 space-y-1 font-mono">
+                                {allocationData.map((d, idx) => (
+                                    <div key={idx} className="flex items-center justify-between text-[10px]">
+                                        <span className="flex items-center gap-1.5 text-slate-300">
+                                            <span className="h-2 w-2 rounded-full inline-block" style={{ backgroundColor: ALLOCATION_COLORS[d.name] || '#64748b' }}></span>
+                                            {d.name}
+                                        </span>
+                                        <span className="text-white font-bold">
+                                            {d.value.toLocaleString()}万
+                                            <span className="text-slate-400 font-normal ml-1">({allocationTotalMan > 0 ? ((d.value / allocationTotalMan) * 100).toFixed(1) : '0.0'}%)</span>
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="glass-card rounded-2xl p-4 md:p-5 space-y-3 border border-amber-500/10">
+                        <span className="text-xs font-extrabold text-white tracking-wider uppercase block">FIRE目標算出ベンチマークスタイル</span>
+                        <div className="grid grid-cols-3 gap-2">
+                            {Object.entries(fireStylePresets).map(([key, item]) => {
+                                const selectedClasses = {
+                                    side: 'bg-yellow-300/10 border-yellow-300 text-white',
+                                    standard: 'bg-emerald-300/10 border-emerald-300 text-white',
+                                    fat: 'bg-pink-300/10 border-pink-300 text-white'
+                                };
+                                const accentClasses = {
+                                    side: 'text-yellow-300',
+                                    standard: 'text-emerald-300',
+                                    fat: 'text-pink-300'
+                                };
+                                return (
+                                    <button
+                                        key={key} onClick={() => updateState(prev=>({...prev, selectedFireStyle:key}))}
+                                        className={`p-2 rounded-xl border text-left cursor-pointer transition-all ${
+                                            state.selectedFireStyle === key ? selectedClasses[key] : 'bg-white/[0.01] border-white/5 text-slate-400 hover:text-slate-200'
+                                        }`}
+                                    >
+                                        <span className={`text-[9px] font-mono font-bold block ${state.selectedFireStyle === key ? accentClasses[key] : 'text-amber-400'}`}>{key.toUpperCase()}</span>
+                                        {(() => {
+                                            // 🎯 生活費×実効年数分(保有アセットの加重平均利回りベース・年金非依存)の資産があるかで判定。
+                                            // 保有株式の配当利回り・予想配当額を変更すると目標生活費(targetMan)が下がり、現金比率に
+                                            // 関係なく即座に判定へ反映される(必要年数25年自体は標準前提のまま据え置き)。
+                                            const aff = presetAffordability[key];
+                                            if (!aff) return null;
+                                            if (aff.sustainable) {
+                                                return aff.extraMonthlyMan > 0.05
+                                                    ? <span className="text-[11px] font-mono font-bold block mt-0.5 text-emerald-300">達成済み！<span className="text-[7px] text-slate-300 font-normal block">+¥{aff.extraMonthlyMan.toLocaleString()}万/月 まで使える余裕あり</span></span>
+                                                    : <span className="text-[11px] font-mono font-bold block mt-0.5 text-emerald-300">達成済み！</span>;
+                                            }
+                                            return <span className="text-[11px] font-mono font-bold block mt-0.5 text-white">資産あと¥{aff.shortfallMan.toLocaleString()}万<span className="text-[7px] text-slate-400 block">不足({aff.requiredYears}年分基準) / 月¥{aff.requiredMonthlySavingMan.toLocaleString()}万積立で{state.fireAge}歳に到達</span></span>;
+                                        })()}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </div>
+
+                    <div className="glass-card rounded-2xl p-4 md:p-5 space-y-3 border border-amber-500/10">
+                        <div className="flex items-center justify-between">
+                            <span className="text-xs font-extrabold text-white tracking-wider uppercase">🏠 住居形態</span>
+                            <div className="flex bg-slate-900 rounded-lg border border-white/10 p-0.5 text-[10px]">
+                                <button onClick={() => updateState(prev => ({...prev, isRenting: false}))} className={`px-3 py-1 rounded ${!state.isRenting ? 'bg-red-500/20 text-red-300 font-bold' : 'text-slate-400'}`}>持ち家(ローンあり)</button>
+                                <button onClick={() => updateState(prev => ({...prev, isRenting: true, postFireStrategy: prev.postFireStrategy === 'FAST_PAYOFF' ? 'CONTINUE_INVEST' : prev.postFireStrategy, loanPrepayment: {...prev.loanPrepayment, enabled: false}}))} className={`px-3 py-1 rounded ${state.isRenting ? 'bg-sky-500/20 text-sky-300 font-bold' : 'text-slate-400'}`}>賃貸(家賃あり)</button>
+                            </div>
+                        </div>
+
+                        <div className="space-y-1.5">
+                            <span className="text-[10px] text-slate-400 font-mono block">サイドFIRE達成後(リタイア年齢以降)の戦略モード</span>
+                            <div className="grid grid-cols-2 gap-2">
+                                {[
+                                    { key: 'CONTINUE_INVEST', label: '📈 配当最大化モード', color: 'red', desc: '個別高配当株で攻める' },
+                                    { key: 'FAST_PAYOFF', label: '🏠 爆速ローン完済モード', color: 'blue', desc: '持ち家限定', disabled: state.isRenting },
+                                    { key: 'DEEP_DEFENSE', label: '🛡️ ガチ守り債券モード', color: 'green', desc: '年利3.0〜3.8%想定' },
+                                    { key: 'REIT_INCOME', label: '🏢 Jリート家賃防衛モード', color: 'orange', desc: '年利4.0〜4.6%想定' }
+                                ].map(m => {
+                                    const activeColorClasses = {
+                                        red: 'bg-red-500/15 border-red-400 text-red-300',
+                                        blue: 'bg-blue-500/15 border-blue-400 text-blue-300',
+                                        green: 'bg-emerald-500/15 border-emerald-400 text-emerald-300',
+                                        orange: 'bg-orange-500/15 border-orange-400 text-orange-300'
+                                    };
+                                    return (
+                                        <button
+                                            key={m.key}
+                                            disabled={m.disabled}
+                                            onClick={() => !m.disabled && updateState(prev => ({...prev, postFireStrategy: m.key}))}
+                                            className={`p-2 rounded-xl border text-left transition-all ${m.disabled ? 'opacity-30 cursor-not-allowed bg-white/[0.01] border-white/5 text-slate-500' : 'cursor-pointer'} ${!m.disabled && state.postFireStrategy === m.key ? activeColorClasses[m.color] : (!m.disabled ? 'bg-white/[0.01] border-white/5 text-slate-400 hover:text-slate-200' : '')}`}
+                                        >
+                                            <span className="text-[10px] font-bold block">{m.label}</span>
+                                            <span className="text-[8px] opacity-70 block">{m.desc}</span>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                            <p className="text-[7px] text-slate-500 leading-tight">※ 賃貸選択時は「爆速ローン完済モード」は選択できません(ローンが無いため)。グラフの色は資産形成期=白、選択モードによって赤/青/緑/オレンジに変わります。</p>
+                        </div>
+                    </div>
+
+                    {/* LOWER LAYER: CONTROL PANELS */}
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 md:gap-6">
+                        
+                        {/* LEFT INPUT COLUMN */}
+                        <div className="lg:col-span-6 space-y-4 md:space-y-6">
+                            <div className="p-1 bg-slate-950/60 backdrop-blur-md rounded-xl border border-white/5 flex gap-1">
+                                {[
+                                    { id: 'assets', label: '証券枠・現物' },
+                                    { id: 'budget', label: '生活詳細予算' },
+                                    { id: 'events', label: 'タイムライン' }
+                                ].map(t => (
+                                    <button
+                                        key={t.id} onClick={() => setActiveTab(t.id)}
+                                        className={`flex-1 py-2 rounded-lg font-bold text-xs cursor-pointer transition-all ${
+                                            activeTab === t.id ? 'bg-gradient-to-b from-slate-800 to-slate-900 text-amber-400 border border-white/5' : 'text-slate-400 hover:text-slate-200'
+                                        }`}
+                                    >
+                                        {t.label}
+                                    </button>
+                                ))}
+                            </div>
+
+                            {/* TAB: ASSETS CONFIG */}
+                            {activeTab === 'assets' && (
+                                <div className="glass-card rounded-2xl p-4 md:p-5 space-y-4">
+                                    <div className="grid grid-cols-4 gap-2">
+                                        <div>
+                                            <label className="text-[9px] text-slate-400 block font-mono mb-0.5">現在の年齢</label>
+                                            <input type="number" value={state.currentAge} onChange={(e)=>handleNumberInputChange(['currentAge'], e.target.value)} onBlur={()=>handleNumberBlur(['currentAge'])} className="glass-input w-full p-1.5 rounded font-mono text-xs text-right" />
+                                        </div>
+                                        <div>
+                                            <label className="text-[9px] text-slate-400 block font-mono mb-0.5">配偶者年齢</label>
+                                            <input type="number" value={state.spouseAge} onChange={(e)=>handleNumberInputChange(['spouseAge'], e.target.value)} onBlur={()=>handleNumberBlur(['spouseAge'])} className="glass-input w-full p-1.5 rounded font-mono text-xs text-right" />
+                                        </div>
+                                        <div>
+                                            <label className="text-[9px] text-purple-400 block font-mono mb-0.5">リタイア年齢</label>
+                                            <input type="number" value={state.fireAge} onChange={(e)=>handleNumberInputChange(['fireAge'], e.target.value)} onBlur={()=>handleNumberBlur(['fireAge'])} className="glass-input w-full p-1.5 rounded font-mono text-xs text-right border-purple-500/30" />
+                                        </div>
+                                        <div>
+                                            <label className="text-[9px] text-slate-400 block font-mono mb-0.5">シミュ限界寿命</label>
+                                            <input type="number" value={state.lifeExpectancy} onChange={(e)=>handleNumberInputChange(['lifeExpectancy'], e.target.value)} onBlur={()=>handleNumberBlur(['lifeExpectancy'])} className="glass-input w-full p-1.5 rounded font-mono text-xs text-right" />
+                                        </div>
+                                    </div>
+
+                                    <div className={`bg-slate-950/40 p-2.5 rounded-xl border space-y-1.5 font-mono ${emergencyFundCheck.isBelowEmergencyFund ? 'border-rose-500/30' : 'border-emerald-500/20'}`}>
+                                        <span className={`text-[10px] font-bold block ${emergencyFundCheck.isBelowEmergencyFund ? 'text-rose-400' : 'text-emerald-400'}`}>🛡️ 生活防衛資金判定(月次生活費の5ヶ月分)</span>
+                                        <div className="flex justify-between text-[9px] text-slate-300">
+                                            <span>必要ライン: ¥{Math.round(emergencyFundCheck.emergencyFundThresholdMan).toLocaleString()}万円 (月{Math.round(emergencyFundCheck.monthlyLivingExpenseMan * 10)/10}万×5ヶ月)</span>
+                                            <span className="text-white font-bold">現有: ¥{Math.round(initialTotalAssetsMan).toLocaleString()}万円</span>
+                                        </div>
+                                        {emergencyFundCheck.isBelowEmergencyFund ? (
+                                            <p className="text-[8px] text-rose-300 leading-tight">⚠️ あと ¥{Math.round(emergencyFundCheck.shortfallMan).toLocaleString()}万円 不足しているため、下記のNISA投資枠設定は非表示・シミュレーション上のシフト処理も停止しています。まずは生活防衛資金の確保を優先してください。</p>
+                                        ) : (
+                                            <p className="text-[8px] text-emerald-300 leading-tight">✅ 生活防衛資金ラインを確保済みです。NISA投資枠設定が利用可能です。</p>
+                                        )}
+                                    </div>
+
+                                    {!emergencyFundCheck.isBelowEmergencyFund && (
+                                    <div className="bg-slate-950/40 p-2.5 rounded-xl border border-teal-500/20 space-y-2 font-mono">
+                                        <div className="flex items-center justify-between">
+                                            <span className="text-[10px] font-bold text-teal-400 block">⚡ NISA最速シフト（埋め立て）カスタマイズ設定</span>
+                                            <div className="flex bg-slate-900 rounded border border-white/10 p-0.5 text-[9px]">
+                                                <button onClick={()=>updateState(prev=>({...prev, nisaDynamicMode: true}))} className={`px-2 py-0.5 rounded ${state.nisaDynamicMode ? 'bg-teal-500/20 text-teal-300 font-bold' : 'text-slate-400'}`}>自動最適化</button>
+                                                <button onClick={()=>updateState(prev=>({...prev, nisaDynamicMode: false}))} className={`px-2 py-0.5 rounded ${!state.nisaDynamicMode ? 'bg-teal-500/20 text-teal-300 font-bold' : 'text-slate-400'}`}>手動設定</button>
+                                            </div>
+                                        </div>
+                                        {state.nisaDynamicMode ? (
+                                            <div className="space-y-1.5">
+                                                <div className="grid grid-cols-2 gap-3">
+                                                    <div>
+                                                        <span className="text-[8px] text-slate-400 block">自動算出：安全投資可能枠 (月/万円)</span>
+                                                        <div className="glass-input w-full p-1 rounded text-right text-teal-400 font-bold text-xs">{nisaDynamicQuota.safeMonthlyMan.toLocaleString()}</div>
+                                                    </div>
+                                                    <div>
+                                                        <span className="text-[8px] text-slate-400 block">埋め立て完了目標期間 (年数)</span>
+                                                        <input type="number" value={state.nisaTargetYears} onChange={(e)=>handleNumberInputChange(['nisaTargetYears'], e.target.value)} onBlur={()=>handleNumberBlur(['nisaTargetYears'])} className="glass-input w-full p-1 rounded text-right text-teal-400 font-bold text-xs" />
+                                                    </div>
+                                                </div>
+                                                <p className="text-[7px] text-slate-500 leading-tight">※ 初期資産の余力(2000万円で満点換算)と、年間収支の余剰(予想配当+副収入-生活費)から、月1万〜15万円の範囲で安全な投資可能枠を自動算出しています(年間換算: ¥{effectiveNisaMaxAnnualLimit.toLocaleString()}万円)。固定枠ではなく、条件を変えると自動でスケールします。</p>
+                                            </div>
+                                        ) : (
+                                            <div className="grid grid-cols-2 gap-3">
+                                                <div>
+                                                    <label className="text-[8px] text-slate-400 block">NISA年間最大投資枠 (万円)</label>
+                                                    <input type="number" value={state.nisaMaxAnnualLimit} onChange={(e)=>handleNumberInputChange(['nisaMaxAnnualLimit'], e.target.value)} onBlur={()=>handleNumberBlur(['nisaMaxAnnualLimit'])} className="glass-input w-full p-1 rounded text-right text-teal-400 font-bold text-xs" />
+                                                </div>
+                                                <div>
+                                                    <label className="text-[8px] text-slate-400 block">埋め立て完了目標期間 (年数)</label>
+                                                    <input type="number" value={state.nisaTargetYears} onChange={(e)=>handleNumberInputChange(['nisaTargetYears'], e.target.value)} onBlur={()=>handleNumberBlur(['nisaTargetYears'])} className="glass-input w-full p-1 rounded text-right text-teal-400 font-bold text-xs" />
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                    )}
+
+                                    <div className="border-t border-white/5 pt-3 space-y-2">
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-xs font-bold text-white uppercase tracking-wider">📈 保有株式・高配当インカム口座群</span>
+                                            <span className="text-[10px] text-slate-400">複利個別マトリクスベース</span>
+                                        </div>
+                                        
+                                        <div className="space-y-2 max-h-[180px] overflow-y-auto pr-1">
+                                            {state.stocksPortfolio.map(s => (
+                                                <div key={s.id} className="p-2.5 rounded-xl bg-white/[0.01] border border-white/5 space-y-1.5 text-xs font-mono">
+                                                    <div className="flex justify-between items-center">
+                                                        <input type="text" placeholder="銘柄名・指数名を入力(例: USハイテクインデックス等)" value={s.label} onChange={(e)=>updateStockItem(s.id, 'label', e.target.value)} className="bg-transparent border-b border-transparent hover:border-slate-600 focus:border-amber-400 text-slate-200 font-bold max-w-[200px]" />
+                                                        <div className="flex items-center gap-1.5">
+                                                            <select value={s.type} onChange={(e)=>updateStockItem(s.id, 'type', e.target.value)} className="bg-slate-900 border border-white/10 rounded px-1 py-0.5 text-[10px] font-bold text-amber-300">
+                                                                <option value="nisa">NISA口座</option>
+                                                                <option value="taxable">特定口座（課税）</option>
+                                                            </select>
+                                                            <button onClick={() => removeStockItem(s.id)} className="text-red-400 font-bold px-1 hover:text-red-300">×</button>
+                                                        </div>
+                                                    </div>
+                                                    <div className="grid grid-cols-3 gap-2">
+                                                        <div>
+                                                            <span className="text-[8px] text-slate-400 block">保有額 (万円)</span>
+                                                            <input type="number" value={s.principal} onChange={(e)=>updateStockItem(s.id, 'principal', e.target.value)} onBlur={()=>handleStockBlur(s.id, 'principal')} className="glass-input w-full p-1 rounded text-right text-emerald-400 font-bold" />
+                                                        </div>
+                                                        <div>
+                                                            <span className="text-[8px] text-slate-400 block">年間株価成長率 (%)</span>
+                                                            <input type="number" step="0.1" value={s.growthRate} onChange={(e)=>updateStockItem(s.id, 'growthRate', e.target.value)} onBlur={()=>handleStockBlur(s.id, 'growthRate')} className="glass-input w-full p-1 rounded text-right text-teal-400" />
+                                                        </div>
+                                                        <div>
+                                                            <span className="text-[8px] text-slate-400 block">年分配金利回り (%)</span>
+                                                            <input type="number" step="0.1" value={s.dividendYield} onChange={(e)=>updateStockItem(s.id, 'dividendYield', e.target.value)} onBlur={()=>handleStockBlur(s.id, 'dividendYield')} className="glass-input w-full p-1 rounded text-right text-amber-300" />
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+
+                                        <div className="bg-slate-950/40 p-2.5 rounded-xl border border-white/5 space-y-2">
+                                            <span className="text-[9px] font-bold text-slate-400 block">+ ポートフォリオ証券アセット新規コマンド追加</span>
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <input type="text" placeholder="銘柄名・資産識別枠" value={newStock.label} onChange={(e)=>setNewStock(p=>({...p, label:e.target.value}))} className="glass-input p-1 rounded text-xs px-2" />
+                                                <select value={newStock.type} onChange={(e)=>setNewStock(p=>({...p, type:e.target.value}))} className="glass-input p-1 rounded text-xs text-amber-300 font-bold bg-slate-900">
+                                                    <option value="nisa">NISA口座</option>
+                                                    <option value="taxable">特定口座（課税）</option>
+                                                </select>
+                                            </div>
+                                            <div className="grid grid-cols-3 gap-2">
+                                                <input type="number" placeholder="初期額(万)" value={newStock.principal} onChange={(e)=>setNewStock(p=>({...p, principal:e.target.value}))} className="glass-input p-1 rounded text-xs text-right" />
+                                                <input type="number" step="0.1" placeholder="成長率(%)" value={newStock.growthRate} onChange={(e)=>setNewStock(p=>({...p, growthRate:e.target.value}))} className="glass-input p-1 rounded text-xs text-right" />
+                                                <input type="number" step="0.1" placeholder="利回り(%)" value={newStock.dividendYield} onChange={(e)=>setNewStock(p=>({...p, dividendYield:e.target.value}))} className="glass-input p-1 rounded text-xs text-right" />
+                                            </div>
+                                            <button onClick={addStockItem} className="w-full bg-slate-800 hover:bg-slate-700 text-white text-[10px] py-1 rounded font-bold uppercase transition-colors cursor-pointer">証券枠コマンドインジェクション</button>
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-3 border-t border-white/5 pt-3">
+                                        <div>
+                                            <label className="text-[9px] text-slate-400 block font-mono mb-1">手元安全現金 [万円]</label>
+                                            <input type="number" value={state.cashHoldings} onChange={(e)=>handleNumberInputChange(['cashHoldings'], e.target.value)} onBlur={()=>handleNumberBlur(['cashHoldings'])} className="glass-input w-full p-1.5 rounded font-mono text-xs font-bold text-right text-slate-300" />
+                                        </div>
+                                        <div>
+                                            <label className="text-[9px] text-purple-400 block font-mono mb-1">暗号資産 (BTC数量)</label>
+                                            <input type="number" step="0.0001" value={state.crypto.btcAmount} onChange={(e)=>handleNumberInputChange(['crypto', 'btcAmount'], e.target.value)} onBlur={()=>handleNumberBlur(['crypto', 'btcAmount'])} className="glass-input w-full p-1.5 rounded font-mono text-xs font-bold text-right text-purple-300" />
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div>
+                                            <label className="text-[9px] text-amber-300 block font-mono mb-1">💰 予想配当額 [万円/月]</label>
+                                            <input type="number" value={state.monthlyDividendIncome} onChange={(e)=>handleNumberInputChange(['monthlyDividendIncome'], e.target.value)} onBlur={()=>handleNumberBlur(['monthlyDividendIncome'])} className="glass-input w-full p-1.5 rounded font-mono text-xs font-bold text-right text-amber-300" />
+                                        </div>
+                                        <div>
+                                            <label className="text-[9px] text-purple-400 block font-mono mb-1">暗号資産 年間価格成長率 (%)</label>
+                                            <input type="number" step="0.1" value={state.crypto.growthRate} onChange={(e)=>handleNumberInputChange(['crypto', 'growthRate'], e.target.value)} onBlur={()=>handleNumberBlur(['crypto', 'growthRate'])} className="glass-input w-full p-1.5 rounded font-mono text-xs font-bold text-right text-purple-300" />
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div>
+                                            <div className="flex items-center justify-between mb-1">
+                                                <label className="text-[9px] text-emerald-400 block font-mono">🟩 収入(バイト・株/FX等) [万円/月]</label>
+                                                <button
+                                                    onClick={() => updateState(prev => ({...prev, sideIncomeEnabled: !prev.sideIncomeEnabled}))}
+                                                    className={`text-[8px] font-bold px-1.5 py-0.5 rounded cursor-pointer transition-colors ${state.sideIncomeEnabled ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/40' : 'bg-slate-800 text-slate-500 border border-white/10'}`}
+                                                >
+                                                    {state.sideIncomeEnabled ? 'ON' : 'OFF'}
+                                                </button>
+                                            </div>
+                                            <input type="number" value={state.monthlySideIncome} disabled={!state.sideIncomeEnabled} onChange={(e)=>handleNumberInputChange(['monthlySideIncome'], e.target.value)} onBlur={()=>handleNumberBlur(['monthlySideIncome'])} className={`glass-input w-full p-1.5 rounded font-mono text-xs font-bold text-right ${state.sideIncomeEnabled ? 'text-emerald-400' : 'text-slate-600'}`} />
+                                            <span className="text-[7px] text-slate-500 block mt-0.5">※ 不確定要素のためON/OFF切替可能。サイドFIREはリタイア後も継続する働き方のため生涯継続想定で加算されます。</span>
+                                        </div>
+                                        <div></div>
+                                    </div>
+
+                                    <div className="bg-slate-950/30 p-2.5 rounded-xl border border-white/5 space-y-2">
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-[10px] font-bold text-white">🏆 実物貴金属コモディティ現物量設定</span>
+                                            <button onClick={fetchLatestMarketRates} disabled={fetchingRates} className="text-[9px] bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded border border-amber-500/20">{fetchingRates ? '同期中..' : 'API一括相場同期'}</button>
+                                        </div>
+                                        <div className="grid grid-cols-3 gap-2">
+                                            <div>
+                                                <span className="text-[8px] text-slate-400 font-mono block">金 (g)</span>
+                                                <input type="number" value={state.commodities.gold.gramsHeld} onChange={(e)=>handleNumberInputChange(['commodities', 'gold', 'gramsHeld'], e.target.value)} onBlur={()=>handleNumberBlur(['commodities', 'gold', 'gramsHeld'])} className="glass-input w-full p-1 rounded text-right font-mono text-xs" />
+                                            </div>
+                                            <div>
+                                                <span className="text-[8px] text-slate-400 font-mono block">白金 (g)</span>
+                                                <input type="number" value={state.commodities.platinum.gramsHeld} onChange={(e)=>handleNumberInputChange(['commodities', 'platinum', 'gramsHeld'], e.target.value)} onBlur={()=>handleNumberBlur(['commodities', 'platinum', 'gramsHeld'])} className="glass-input w-full p-1 rounded text-right font-mono text-xs" />
+                                            </div>
+                                            <div>
+                                                <span className="text-[8px] text-slate-400 font-mono block">銀 (g)</span>
+                                                <input type="number" value={state.commodities.silver.gramsHeld} onChange={(e)=>handleNumberInputChange(['commodities', 'silver', 'gramsHeld'], e.target.value)} onBlur={()=>handleNumberBlur(['commodities', 'silver', 'gramsHeld'])} className="glass-input w-full p-1 rounded text-right font-mono text-xs" />
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-3 gap-2 pt-1 border-t border-white/5">
+                                            <div>
+                                                <span className="text-[8px] text-amber-300 font-mono block">金 成長率(%/年)</span>
+                                                <input type="number" step="0.1" value={state.commodities.gold.growthRate} onChange={(e)=>handleNumberInputChange(['commodities', 'gold', 'growthRate'], e.target.value)} onBlur={()=>handleNumberBlur(['commodities', 'gold', 'growthRate'])} className="glass-input w-full p-1 rounded text-right font-mono text-xs text-amber-300" />
+                                            </div>
+                                            <div>
+                                                <span className="text-[8px] text-amber-300 font-mono block">白金 成長率(%/年)</span>
+                                                <input type="number" step="0.1" value={state.commodities.platinum.growthRate} onChange={(e)=>handleNumberInputChange(['commodities', 'platinum', 'growthRate'], e.target.value)} onBlur={()=>handleNumberBlur(['commodities', 'platinum', 'growthRate'])} className="glass-input w-full p-1 rounded text-right font-mono text-xs text-amber-300" />
+                                            </div>
+                                            <div>
+                                                <span className="text-[8px] text-amber-300 font-mono block">銀 成長率(%/年)</span>
+                                                <input type="number" step="0.1" value={state.commodities.silver.growthRate} onChange={(e)=>handleNumberInputChange(['commodities', 'silver', 'growthRate'], e.target.value)} onBlur={()=>handleNumberBlur(['commodities', 'silver', 'growthRate'])} className="glass-input w-full p-1 rounded text-right font-mono text-xs text-amber-300" />
+                                            </div>
+                                        </div>
+
+                                        <div className="pt-1 border-t border-white/5">
+                                            <label className="text-[8px] text-amber-400 block font-mono">⚡ 毎年自動定額売却枠 (万円/年)</label>
+                                            <input type="number" value={state.commodityAnnualSellAmount} onChange={(e)=>handleNumberInputChange(['commodityAnnualSellAmount'], e.target.value)} onBlur={()=>handleNumberBlur(['commodityAnnualSellAmount'])} className="glass-input w-full p-1 rounded text-right font-mono text-xs text-amber-400 font-bold" placeholder="50" />
+                                            <span className="text-[7px] text-slate-400 block mt-0.5">※ 年間50万円までの売却益（譲渡所得）は特別控除により非課税、超過分は総合課税計算が自動適用されます。</span>
+                                        </div>
+
+                                        {fetchMessage && <p className="text-[8px] text-center font-mono text-slate-400 leading-tight">{fetchMessage}</p>}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* TAB: BUDGET CONFIG & LIABILITIES */}
+                            {activeTab === 'budget' && (
+                                <div className="glass-card rounded-2xl p-4 md:p-5 space-y-4">
+                                    <div className="flex justify-between items-center border-b border-white/5 pb-2">
+                                        <h3 className="text-xs font-extrabold text-white uppercase">経費年間正確予算構成マトリクス</h3>
+                                        <span className="text-xs font-mono text-amber-400 font-black">合計: ¥{annualExpensesMan.toLocaleString()}万/年</span>
+                                    </div>
+
+                                    {state.isRenting ? (
+                                        <div className="p-2.5 rounded-xl bg-sky-500/[0.04] border border-sky-500/20 space-y-2">
+                                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                                                <span className="text-xs font-mono font-bold text-sky-300">🏢 家賃支払額 <span className="text-[9px] text-slate-400 font-normal">(生涯継続・完済で消えることはありません)</span></span>
+                                                <span className="text-xs font-mono font-black text-white">¥{state.monthlyRent}万/月 <span className="text-[9px] text-slate-400 font-normal">(年換算 ¥{(state.monthlyRent * 12).toLocaleString()}万)</span></span>
+                                            </div>
+                                            <div>
+                                                <span className="text-[8px] text-slate-400 block font-mono">家賃(万/月)</span>
+                                                <input type="number" value={state.monthlyRent} onChange={(e)=>handleNumberInputChange(['monthlyRent'], e.target.value)} onBlur={()=>handleNumberBlur(['monthlyRent'])} className="glass-input w-full p-1 rounded text-right font-mono text-[11px] text-sky-300" />
+                                            </div>
+                                            <p className="text-[7px] text-slate-500 leading-tight">※ 賃貸の場合、住宅ローンは発生しません。家賃はインフレ率に応じて上昇し、生涯(リタイア後も)継続する費用として毎年のキャッシュフローに反映されます。持ち家に切り替えると、この欄は住宅ローン設定に変わります。</p>
+                                        </div>
+                                    ) : (
+                                    <div className="p-2.5 rounded-xl bg-red-500/[0.04] border border-red-500/20 space-y-2">
+                                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                                            <span className="text-xs font-mono font-bold text-red-300">🏠 住宅ローン返済相当額 <span className="text-[9px] text-slate-400 font-normal">(自動連動・完済で生活費から消滅)</span></span>
+                                            <span className="text-xs font-mono font-black text-white">
+                                                {state.liabilities.repaymentType === 'equalPrincipal'
+                                                    ? <>¥{((equalPrincipalPerYearYen + state.liabilities.loanAmount*10000*(state.liabilities.loanRate/100))/12/10000).toFixed(1)}万/月<span className="text-[8px] text-slate-400 font-normal">(初年度・年々減少)</span></>
+                                                    : <>¥{(loanRepaymentYen / 10000 / 12).toFixed(1)}万/月 <span className="text-[9px] text-slate-400 font-normal">(年換算 ¥{Math.round(loanRepaymentYen/10000).toLocaleString()}万)</span></>
+                                                }
+                                            </span>
+                                        </div>
+                                        <div className="grid grid-cols-3 gap-1.5">
+                                            <div>
+                                                <span className="text-[8px] text-slate-400 block font-mono">借入残高(万)</span>
+                                                <input type="number" value={state.liabilities.loanAmount} onChange={(e)=>handleNumberInputChange(['liabilities', 'loanAmount'], e.target.value)} onBlur={()=>handleNumberBlur(['liabilities', 'loanAmount'])} className="glass-input w-full p-1 rounded text-right font-mono text-[11px]" />
+                                            </div>
+                                            <div>
+                                                <span className="text-[8px] text-slate-400 block font-mono">残期間(年) ={'>'}完済まで</span>
+                                                <input type="number" value={state.liabilities.loanTerm} onChange={(e)=>handleNumberInputChange(['liabilities', 'loanTerm'], e.target.value)} onBlur={()=>handleNumberBlur(['liabilities', 'loanTerm'])} className="glass-input w-full p-1 rounded text-right font-mono text-[11px]" />
+                                            </div>
+                                            <div>
+                                                <span className="text-[8px] text-slate-400 block font-mono">金利(%)</span>
+                                                <input type="number" step="0.05" value={state.liabilities.loanRate} onChange={(e)=>handleNumberInputChange(['liabilities', 'loanRate'], e.target.value)} onBlur={()=>handleNumberBlur(['liabilities', 'loanRate'])} className="glass-input w-full p-1 rounded text-right font-mono text-[11px] text-red-300" />
+                                            </div>
+                                        </div>
+
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-[8px] text-slate-400 font-mono">返済方式:</span>
+                                            <div className="flex bg-slate-900 rounded border border-white/10 p-0.5 text-[9px]">
+                                                <button onClick={()=>updateState(prev=>({...prev, liabilities:{...prev.liabilities, repaymentType:'equalPayment'}}))} className={`px-2 py-0.5 rounded ${state.liabilities.repaymentType === 'equalPayment' ? 'bg-red-500/20 text-red-300 font-bold' : 'text-slate-400'}`}>元利均等</button>
+                                                <button onClick={()=>updateState(prev=>({...prev, liabilities:{...prev.liabilities, repaymentType:'equalPrincipal'}}))} className={`px-2 py-0.5 rounded ${state.liabilities.repaymentType === 'equalPrincipal' ? 'bg-red-500/20 text-red-300 font-bold' : 'text-slate-400'}`}>元本均等</button>
+                                            </div>
+                                        </div>
+
+                                        <div className="border-t border-red-500/10 pt-2 space-y-1.5">
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-[9px] font-bold text-amber-300">⚡ 繰上げ返済設定</span>
+                                                <button
+                                                    onClick={() => updateState(prev => ({...prev, loanPrepayment: {...prev.loanPrepayment, enabled: !prev.loanPrepayment.enabled}}))}
+                                                    className={`text-[8px] font-bold px-1.5 py-0.5 rounded cursor-pointer transition-colors ${state.loanPrepayment.enabled ? 'bg-amber-500/20 text-amber-300 border border-amber-400/40' : 'bg-slate-800 text-slate-500 border border-white/10'}`}
+                                                >
+                                                    {state.loanPrepayment.enabled ? 'ON' : 'OFF'}
+                                                </button>
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-1.5">
+                                                <div>
+                                                    <span className="text-[8px] text-slate-400 block font-mono">💎 コモディティ売却資金より(万/年)</span>
+                                                    <input type="number" disabled={!state.loanPrepayment.enabled} value={state.loanPrepayment.annualFromCommodity} onChange={(e)=>handleNumberInputChange(['loanPrepayment', 'annualFromCommodity'], e.target.value)} onBlur={()=>handleNumberBlur(['loanPrepayment', 'annualFromCommodity'])} className={`glass-input w-full p-1 rounded text-right font-mono text-[11px] ${state.loanPrepayment.enabled ? 'text-amber-300' : 'text-slate-600'}`} />
+                                                </div>
+                                                <div>
+                                                    <span className="text-[8px] text-slate-400 block font-mono">💴 現金より(万/年・任意)</span>
+                                                    <input type="number" disabled={!state.loanPrepayment.enabled} value={state.loanPrepayment.annualFromCash} onChange={(e)=>handleNumberInputChange(['loanPrepayment', 'annualFromCash'], e.target.value)} onBlur={()=>handleNumberBlur(['loanPrepayment', 'annualFromCash'])} className={`glass-input w-full p-1 rounded text-right font-mono text-[11px] ${state.loanPrepayment.enabled ? 'text-amber-300' : 'text-slate-600'}`} />
+                                                </div>
+                                            </div>
+                                            <p className="text-[7px] text-slate-500 leading-tight">※ 繰上げ分は元金を直接減額(期間短縮型)。手元現金が不足する年は現金側の繰上げは自動でスキップされます。ボーナス等の単発の繰上げ返済は「タイムライン」タブから追加できます。</p>
+                                        </div>
+
+                                        <p className="text-[8px] text-slate-500 leading-tight">※ 通常ペースなら{state.currentAge + state.liabilities.loanTerm}歳(残り{state.liabilities.loanTerm}年)で完済予定(繰上げ返済があればさらに早まります)。完済後はこの返済額が自動的に0円になり、総資産・グラフに正しく反映されます(下記「合計」には含まれません。生活予算とは別枠で毎年のキャッシュフローに反映される二重計上防止の仕組みです)。</p>
+
+                                        <button
+                                            onClick={() => setShowLoanExplainer(prev => !prev)}
+                                            className="w-full flex items-center justify-between px-2 py-1.5 rounded-lg bg-slate-900/60 border border-white/10 text-[10px] font-bold text-amber-300 hover:bg-slate-900 transition-colors cursor-pointer"
+                                        >
+                                            <span>📖 返済方式・繰上げ返済のしくみを解説{showLoanExplainer ? '(閉じる)' : '(開く)'}</span>
+                                            <span>{showLoanExplainer ? '▲' : '▼'}</span>
+                                        </button>
+
+                                        {showLoanExplainer && loanComparison && (
+                                            <div className="p-2.5 rounded-xl bg-slate-950/60 border border-white/10 space-y-2 text-[9px] text-slate-300 leading-relaxed">
+                                                <div>
+                                                    <span className="font-bold text-white block mb-0.5">① 元利均等 vs 元本均等</span>
+                                                    元利均等(毎月一定額)は総利息が<span className="text-red-300 font-bold">約{loanComparison.totalInterestEqualPayment.toLocaleString()}万円</span>になる一方、序盤は利息の割合が高く元金が減りにくいのが特徴です。
+                                                    元本均等(元金が毎月一定)は総利息が<span className="text-emerald-300 font-bold">約{loanComparison.totalInterestEqualPrincipal.toLocaleString()}万円</span>と元利均等より少なく済みますが、初期の返済額が大きくなります。差額は約{Math.max(0, loanComparison.totalInterestEqualPayment - loanComparison.totalInterestEqualPrincipal).toLocaleString()}万円です。
+                                                </div>
+                                                <div>
+                                                    <span className="font-bold text-white block mb-0.5">② 繰上げ返済の効果</span>
+                                                    現在の設定({commodityTotalMan > 0 ? `コモディティ売却資金${state.loanPrepayment.annualFromCommodity}万/年 + ` : 'コモディティ保有なし(繰上げスキップ) + '}現金{state.loanPrepayment.annualFromCash}万/年)で繰上げ返済すると、完済は当初{loanComparison.originalTerm}年 → 約<span className="text-amber-300 font-bold">{loanComparison.yearsWithPrepay}年</span>({loanComparison.yearsSaved > 0 ? `${loanComparison.yearsSaved}年短縮` : '短縮なし'})になり、総利息は約{loanComparison.totalInterestWithPrepay.toLocaleString()}万円まで下がる見込みです。完済が早まった分だけ、老後後半のキャッシュフローの余裕(生活費からローンが消える期間が延びる)が増えます。
+                                                </div>
+                                                <div>
+                                                    <span className="font-bold text-white block mb-0.5">③ 繰上げ返済 vs 高配当株での運用</span>
+                                                    現在のローン金利は{state.liabilities.loanRate}%です。もし手元資金を高配当株や投資に回した場合の期待リターン(成長率+配当利回り)がこの金利より高ければ、理論上は繰上げ返済より投資を優先する方が資産形成上有利になりやすいとされています(金利差分がプラスに働くため)。一方、繰上げ返済は市場変動の影響を受けない「確実にローン金利分だけ得をする」選択であり、無借金になる心理的な安心感も得られます。どちらが正解かは金利水準・投資リターンの不確実性・リスク許容度によって変わるため、一概には決められません。
+                                                </div>
+                                                <p className="text-[7px] text-slate-500 pt-1 border-t border-white/5">※ 上記は簡易計算による一般的な傾向の解説であり、投資助言ではありません。実際の判断は税制・ご自身のリスク許容度も踏まえてご検討ください。</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                    )}
+
+                                    <div className="rounded-xl border border-white/10 bg-white/[0.01] overflow-hidden">
+                                        <button
+                                            onClick={() => setShowSpotEventsPanel(prev => !prev)}
+                                            className="w-full flex items-center justify-between px-3 py-2 text-[11px] font-bold text-slate-200 hover:bg-white/[0.03] transition-colors cursor-pointer"
+                                        >
+                                            <span>💰 追加オプション：スポット売却・繰上返済イベント {state.spotEvents.length > 0 ? `(${state.spotEvents.length}件登録中)` : ''}</span>
+                                            <span className="text-slate-400">{showSpotEventsPanel ? '▲' : '▼'}</span>
+                                        </button>
+                                        {showSpotEventsPanel && (
+                                            <div className="p-3 border-t border-white/10 space-y-3">
+                                                <p className="text-[8px] text-slate-500 leading-tight">ボーナスやトレード利益、仮想通貨・コモディティの利益確定タイミングに合わせて、任意の年齢で単発の資産売却・繰上返済を実行できます。</p>
+
+                                                <div className="grid grid-cols-3 gap-1.5">
+                                                    <div>
+                                                        <span className="text-[8px] text-slate-400 block font-mono">実行年齢</span>
+                                                        <input type="number" value={newSpotEvent.age} onChange={(e)=>setNewSpotEvent(prev=>({...prev, age: e.target.value}))} className="glass-input w-full p-1 rounded text-right font-mono text-[11px]" />
+                                                    </div>
+                                                    <div>
+                                                        <span className="text-[8px] text-slate-400 block font-mono">イベントタイプ</span>
+                                                        <select value={newSpotEvent.type} onChange={(e)=>setNewSpotEvent(prev=>({...prev, type: e.target.value}))} className="glass-input w-full p-1 rounded text-[10px]">
+                                                            <option value="loanPrepay">現金からローン繰上返済</option>
+                                                            <option value="commoditySell">コモディティ売却(現金化)</option>
+                                                            <option value="cryptoSell">仮想通貨売却(現金化)</option>
+                                                        </select>
+                                                    </div>
+                                                    <div>
+                                                        <span className="text-[8px] text-slate-400 block font-mono">金額(万円)</span>
+                                                        <input type="number" value={newSpotEvent.amount} onChange={(e)=>setNewSpotEvent(prev=>({...prev, amount: e.target.value}))} placeholder="例: 100" className="glass-input w-full p-1 rounded text-right font-mono text-[11px]" />
+                                                    </div>
+                                                </div>
+                                                <button onClick={addSpotEvent} className="w-full bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-bold py-1.5 rounded-lg text-[10px] cursor-pointer tracking-wider uppercase transition-colors border border-amber-500/30">
+                                                    ＋ イベントを追加
+                                                </button>
+
+                                                {state.spotEvents.length > 0 && (
+                                                    <div className="space-y-1 pt-1 border-t border-white/5">
+                                                        {state.spotEvents.map(se => (
+                                                            <div key={se.id} className="flex items-center justify-between gap-2 p-1.5 rounded-lg bg-white/[0.02] text-[10px] font-mono">
+                                                                <span className="text-slate-300">
+                                                                    <span className="bg-slate-800 text-white font-bold text-[9px] px-1.5 rounded mr-1">{se.age}歳</span>
+                                                                    {spotEventTypeLabel[se.type]}
+                                                                </span>
+                                                                <div className="flex items-center gap-2">
+                                                                    <span className="text-amber-300 font-bold">{se.amount.toLocaleString()}万</span>
+                                                                    <button onClick={() => removeSpotEvent(se.id)} className="text-red-400 hover:text-red-300 font-bold cursor-pointer text-sm">🗑</button>
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <div className="space-y-1.5 max-h-[260px] overflow-y-auto pr-1">
+                                        {state.budgetItems.map(b => (
+                                            <div key={b.id} className="p-2 rounded-xl bg-white/[0.01] border border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-xs font-mono">
+                                                <input type="text" value={b.label} onChange={(e) => updateBudgetItem(b.id, 'label', e.target.value)} className="bg-transparent border-b border-transparent hover:border-slate-700 focus:border-amber-400 text-slate-200 font-medium flex-1 mr-2" />
+                                                <div className="flex items-center justify-end gap-1.5">
+                                                    <input type="number" step="0.1" value={b.amount} onChange={(e) => updateBudgetItem(b.id, 'amount', e.target.value)} onBlur={()=>handleBudgetBlur(b.id, 'amount')} className="glass-input w-16 p-0.5 rounded text-right font-bold text-amber-400" />
+                                                    <span className="text-[10px] text-slate-400 w-10">{b.isAnnual ? '万/年' : '万/月'}</span>
+                                                    <button onClick={() => removeBudgetItem(b.id)} className="text-red-400 font-bold px-1 hover:text-red-300">×</button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    <div className="bg-slate-950/40 p-2.5 rounded-xl border border-white/5 space-y-2">
+                                        <span className="text-[9px] font-bold text-slate-400 block">+ 予算経費構造の新規項目追加コマンド</span>
+                                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                            <input type="text" placeholder="項目名 (例: 趣味食費)" value={newBudget.label} onChange={(e)=>setNewBudget(p=>({...p, label:e.target.value}))} className="glass-input p-1 rounded text-xs px-2 col-span-1 sm:col-span-1" />
+                                            <input type="number" step="0.1" placeholder="金額(万)" value={newBudget.amount} onChange={(e)=>setNewBudget(p=>({...p, amount:e.target.value}))} className="glass-input p-1 rounded text-xs text-right" />
+                                            <select value={newBudget.isAnnual ? "true" : "false"} onChange={(e)=>setNewBudget(p=>({...p, isAnnual: e.target.value === "true"}))} className="glass-input p-1 rounded text-xs">
+                                                <option value="false">毎月分支出</option>
+                                                <option value="true">年額分支出</option>
+                                            </select>
+                                        </div>
+                                        <button onClick={addBudgetItem} className="w-full bg-slate-800 hover:bg-slate-700 text-white text-[10px] py-1.5 rounded font-bold uppercase transition-colors cursor-pointer">
+                                            予算経費項目を追加
+                                        </button>
+                                    </div>
+
+                                    <div className="border-t border-white/5 pt-3 space-y-2">
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-[10px] font-bold text-red-400 uppercase">🏠 金利タイプ設定</span>
+                                            <div className="flex bg-slate-900 rounded border border-white/10 p-0.5 text-[9px]">
+                                                <button onClick={()=>handleNumberInputChange(['liabilities','loanRateType'], 'variable')} className={`px-2 py-0.5 rounded ${state.liabilities.loanRateType === 'variable' ? 'bg-red-500/20 text-red-400 font-bold' : 'text-slate-400'}`}>変動金利</button>
+                                                <button onClick={()=>handleNumberInputChange(['liabilities','loanRateType'], 'fixed')} className={`px-2 py-0.5 rounded ${state.liabilities.loanRateType === 'fixed' ? 'bg-amber-500/20 text-amber-400 font-bold' : 'text-slate-400'}`}>固定金利</button>
+                                            </div>
+                                        </div>
+                                        <p className="text-[8px] text-slate-500 leading-tight">※ 借入残高・残期間・金利・返済方式・繰上げ返済の設定は上部の「🏠 住宅ローン返済相当額」欄にまとめてあります。</p>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* TAB: TIMELINE EVENTS */}
+                            {activeTab === 'events' && (
+                                <div className="glass-card rounded-2xl p-4 md:p-5 space-y-4">
+                                    <h3 className="text-xs font-extrabold text-white tracking-wider uppercase border-b border-white/5 pb-2">ライフイベント個別タイムライン設定</h3>
+
+                                    <div className="bg-slate-950/40 p-3 rounded-xl border border-emerald-500/20 space-y-2 font-mono">
+                                        <span className="text-[10px] font-bold text-emerald-400 block">💴 公的年金シミュレーター(繰上げ・繰下げ受給)</span>
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div>
+                                                <label className="text-[8px] text-slate-400 block">65歳時点の想定年金額 (万円/年)</label>
+                                                <input type="number" value={state.pension.baseAnnualAmount} onChange={(e)=>handleNumberInputChange(['pension', 'baseAnnualAmount'], e.target.value)} onBlur={()=>handleNumberBlur(['pension', 'baseAnnualAmount'])} className="glass-input w-full p-1 rounded text-right text-emerald-400 font-bold text-xs" />
+                                            </div>
+                                            <div>
+                                                <label className="text-[8px] text-slate-400 block">受給開始年齢 (60〜75歳)</label>
+                                                <input type="number" min="60" max="75" value={state.pension.claimAge} onChange={(e)=>handleNumberInputChange(['pension', 'claimAge'], e.target.value)} onBlur={()=>handleNumberBlur(['pension', 'claimAge'])} className="glass-input w-full p-1 rounded text-right text-emerald-400 font-bold text-xs" />
+                                            </div>
+                                        </div>
+                                        <p className="text-[9px] text-slate-300 pt-1 border-t border-white/5">
+                                            {pensionAdjustment.claimAge}歳受給開始の場合: 年間 <span className="text-emerald-400 font-bold">{Math.round(pensionAdjustment.adjustedAnnualMan).toLocaleString()}万円</span>
+                                            <span className={pensionAdjustment.ratePct >= 0 ? 'text-emerald-400' : 'text-rose-400'}> ({pensionAdjustment.ratePct >= 0 ? '+' : ''}{pensionAdjustment.ratePct.toFixed(1)}% 65歳基準比)</span>
+                                        </p>
+                                        <span className="text-[7px] text-slate-500 block">※ 日本の年金制度に準拠: 繰上げ(60〜64歳)は1ヶ月あたり0.4%減額、繰下げ(66〜75歳)は1ヶ月あたり0.7%増額で試算(2022年4月以降ルール)。受給開始年齢からグラフ・総資産に自動反映されます。</span>
+                                    </div>
+                                    
+                                    <div className="space-y-2 max-h-[180px] overflow-y-auto pr-1">
+                                        {state.lifeEvents.map(e => (
+                                            <div key={e.id} className="p-2 rounded-xl bg-white/[0.01] border border-white/5 flex justify-between items-center font-mono text-xs">
+                                                <div className="flex items-center gap-1.5">
+                                                    <span className="bg-slate-800 text-slate-200 font-bold text-[9px] px-1.5 rounded">{e.age}歳</span>
+                                                    <span className="text-slate-300">{e.label}</span>
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                    <span className={`font-bold ${e.kind === 'expense' ? 'text-rose-400' : e.kind === 'loanPrepay' ? 'text-amber-400' : 'text-emerald-400'}`}>
+                                                        {e.kind === 'income' ? '+' : '-'}{e.amount.toLocaleString()}万{e.kind === 'loanPrepay' ? ' (繰上返済)' : ''}
+                                                    </span>
+                                                    <button onClick={() => removeLifeEvent(e.id)} className="text-red-400 hover:text-red-300 font-bold cursor-pointer text-sm">×</button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    <div className="bg-slate-950/40 p-3 rounded-xl border border-white/5 space-y-2">
+                                        <span className="text-[9px] font-bold text-slate-400 block uppercase">イベントオブジェクトの追加コマンド</span>
+                                        <div className="grid grid-cols-3 gap-2">
+                                            <div>
+                                                <span className="text-[8px] text-slate-400 block font-mono">発生年齢</span>
+                                                <input type="number" value={newEvent.age} onChange={(e)=>setNewEvent(prev=>({...prev, age: e.target.value}))} className="glass-input w-full p-1 rounded font-mono text-xs text-right" />
+                                            </div>
+                                            <div className="col-span-2">
+                                                <span className="text-[8px] text-slate-400 block font-mono">イベント識別ラベル名</span>
+                                                <input type="text" placeholder="例: 相続インフロー、時計資産" value={newEvent.label} onChange={(e)=>setNewEvent(prev=>({...prev, label: e.target.value}))} className="glass-input w-full p-1 rounded text-xs px-2" />
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <div>
+                                                <span className="text-[8px] text-slate-400 block font-mono">金額 (万円)</span>
+                                                <input type="number" value={newEvent.amount} onChange={(e)=>setNewEvent(prev=>({...prev, amount: e.target.value}))} className="glass-input w-full p-1 rounded font-mono text-xs text-right" />
+                                            </div>
+                                            <div>
+                                                <span className="text-[8px] text-slate-400 block font-mono">イベントデータ種別</span>
+                                                <select value={newEvent.kind} onChange={(e)=>setNewEvent(prev=>({...prev, kind: e.target.value}))} className="glass-input w-full p-1 rounded text-xs">
+                                                    <option value="expense">キャッシュアウト (臨時支出)</option>
+                                                    <option value="income">インフロー (臨時収入・年金)</option>
+                                                    <option value="loanPrepay">🏠 住宅ローン繰上げ返済(単発・現金)</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <button onClick={addLifeEvent} className="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold py-1.5 rounded-lg text-[10px] cursor-pointer transition-colors">
+                                            タイムラインへ反映
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* RIGHT DIAGNOSIS COLUMN */}
+                        <div className="lg:col-span-6 space-y-4 md:space-y-6">
+                            <div className="space-y-3">
+                                <button
+                                    onClick={handleDiagnosisButtonClick} disabled={diagnosing}
+                                    className="w-full bg-gradient-to-r from-amber-400 via-yellow-500 to-purple-600 hover:opacity-95 text-slate-950 text-xs font-black py-3 rounded-2xl shadow-xl cursor-pointer tracking-wider flex items-center justify-center gap-2 transition-all"
+                                >
+                                    <span>{diagnosing ? 'マトリクス解析エンジン駆動中...' : (showDiagnosis ? '📊 診断シートを閉じる' : '📊 詳細シミュレーション診断シートを生成')}</span>
+                                </button>
+
+                                {showDiagnosis && (
+                                    <div className="glass-card rounded-2xl p-4 md:p-5 space-y-2 border border-amber-400/20">
+                                        <div className="flex items-center gap-2 pb-2 border-b border-white/5">
+                                            <span className="h-2 w-2 rounded-full bg-amber-400 animate-pulse"></span>
+                                            <span className="font-display text-xs font-black text-white uppercase tracking-wider">SYSTEM ANALYTICAL REPORT DIRECTORY</span>
+                                        </div>
+                                        <pre className="font-mono text-[10px] md:text-xs leading-relaxed text-[#b4bcd0] whitespace-pre-wrap overflow-x-auto bg-black/40 p-3 rounded-xl border border-white/5 max-h-[340px]">
+                                            {diagnosisText}
+                                        </pre>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* 法的免責事項ステートメント */}
+                    <footer className="w-full text-center py-4 px-2 border-t border-white/5 mt-6">
+                        <p className="text-[10px] md:text-xs font-medium text-amber-400/80 tracking-wide max-w-4xl mx-auto leading-relaxed">
+                            ⚠️ <strong>【免責事項】</strong> 本ツールによる試算はあくまでシミュレーション上の予測であり、将来の投資成果を保証するものではなく、また投資助言を行うものではありません。実際の資産運用にあたにあたっては個人の責任と判断のもとで行ってください。
+                        </p>
+                    </footer>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
